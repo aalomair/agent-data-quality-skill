@@ -128,7 +128,7 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 ## Read-only boundaries
 
-- The helper never writes to the source. SQLite is opened via URI `mode=ro`; write attempts fail with `attempt to write a readonly database` (enforced by tests). All readers are verified to leave source bytes unchanged.
+- The helper never writes to the source. SQLite is opened via URI `mode=ro`; write attempts fail with `attempt to write a readonly database` (enforced by tests). All readers are verified to leave source bytes unchanged. Note: opening a WAL-mode database read-only may create SQLite's transient `-shm`/`-wal` sidecar files — the database file itself is never written.
 - No network access, no model calls, and no execution of data-derived strings. There is no output-file flag.
 - `row_refs` are run-local record positions (1-based; physical line numbers for text sources; scan offsets for SQLite), not permanent row identifiers.
 
@@ -145,7 +145,7 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pyarrow 25.0.1, pytest 9.1.1.
 
-- **Test suite** — `python -m pytest tests/ -q` passes (88 tests): every reader and rule, clean/dirty cases, missing/blank/literal-NA distinctions, Arabic/BOM, leading zeros, mixed numerics, duplicate semantics, empty data, invalid inputs and rules, JSON/exit-code contract, evidence limits, adversarial cell content, unchanged source bytes, and SQLite read-only enforcement (write attempt fails).
+- **Test suite** — `python -m pytest tests/ -q` passes (93 tests): every reader and rule, clean/dirty cases, missing/blank/literal-NA distinctions, Arabic/BOM, leading zeros, mixed numerics, duplicate semantics, empty data, invalid inputs and rules (including non-finite rule bounds), JSON/exit-code contract, evidence limits, adversarial cell content, unchanged source bytes, WAL-mode SQLite, and SQLite read-only enforcement (write attempt fails).
 - **Copied-folder test** — `skills/data-quality/` was copied to an unrelated directory, installed into a clean venv **from `requirements.txt` only**, and run from an unrelated working directory: profile+rules run produced the expected exit 1 and matching check summary; the Parquet path returned the specific `missing_dependency` error because pyarrow was absent (as designed). No repository-root dependency.
 - **Hermes Agent harness (this machine)** — `hermes skills list` registers the installed skill as enabled; two end-to-end agent sessions executed the skill through the harness (one loading `SKILL.md` explicitly; one via `hermes -z --skills data-quality`, where the harness preloaded the skill **by name** and the agent resolved and ran the installed `scripts/dq.py` itself). Both produced the expected per-check report (exit 1; 3 passed / 3 failed / 0 not_evaluated). Note: Hermes one-shot mode (`-z`) does not inject a skills index — pass `--skills data-quality`, or install into the host's skills directory for regular sessions.
 - **Format compatibility vs tested harnesses** — the bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`), which does not imply other hosts were exercised. Codex, Claude Code, and all other hosts are **untested** by this repository.

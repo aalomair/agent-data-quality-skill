@@ -35,12 +35,15 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 - Inclusive numeric bounds: a violation when `value < min` (or `value > max`).
 - The numeric view parses integers and floats, and strings matching a canonical numeric form: optional sign, digits with optional decimal part, optional exponent (`42`, `-3.5`, `.5`, `5.`, `1e3`) — after trimming surrounding whitespace. Leading zeros parse fine (`00123` → 123); values themselves are never rewritten.
 - A nonmissing value that cannot be parsed as a number **fails the check** — it is never coerced to missing and dropped.
+- Rule bounds must be **finite** numbers; `.nan` / `.inf` in a rules file are invalid rule values (exit 2).
+- A value that parses to a non-finite float (for example `1e999`) is not valid for min/max and fails the check.
 - Booleans are excluded from numeric interpretation; a boolean value in a min/max column fails the check.
 - No currency symbols, locale separators, or date parsing. `min` greater than `max` is a rules error.
 
 ### `allowed`
 - A non-empty list of YAML scalars (strings, numbers, booleans).
 - **Exact, case-sensitive matching, no implicit conversion**: string `"1"` never matches number `1`; boolean `true` never matches number `1`; numbers compare numerically across int/float (`1` matches `1.0`).
+- A boolean cell matches only a boolean allowed value; allowed numbers must be finite.
 - Missing values are excluded from evaluation.
 
 ### `regex`
@@ -54,7 +57,7 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 
 ## Evidence and limits
 
-- `row_refs`: up to **10** run-local 1-based record positions. Text sources use physical line numbers; SQLite positions are scan offsets, **not row IDs**.
+- `row_refs`: up to **10** run-local 1-based positions within the inspected records. For TXT/Markdown sources these are the physical line numbers; JSONL skips blank lines, so its positions count records rather than physical lines; SQLite positions are scan offsets, **not row IDs**.
 - `examples`: opt-in via `--examples N` (0–5). Up to 5 distinct violating values per check, each truncated to 100 characters with an `…` marker. Missing-value violations carry no examples.
 - Statuses: `passed`, `failed`, `not_evaluated`. Overall status: `error` (exit 2), `failed` (exit 1), `passed` (rules executed and at least one passed, none failed), `inspected` (no rules, or no check produced a passing verdict — e.g. empty data).
 - Empty datasets: percentages are `null`; no check can pass; nothing about quality is implied.
@@ -62,4 +65,5 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 ## Read-only guarantees
 
 - Sources are opened for reading only; SQLite connections use URI `mode=ro` and write attempts raise `attempt to write a readonly database` (covered by tests).
+- Opening a WAL-mode database read-only may create SQLite's transient `-shm`/`-wal` sidecar files; the database file itself is never written.
 - The helper never writes files; save reports by redirecting stdout to a NEW path — never onto the source or rules file.

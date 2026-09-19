@@ -774,6 +774,7 @@ def test_xlsx_first_sheet_selection_and_warnings(tmp_path):
     assert col(payload, "b")["observed_types"] == {"number": 1}
     assert col(payload, "b")["missing"] == 3  # blank cell + formula with no cached value
     assert col(payload, "c")["observed_types"] == {"boolean": 1, "string": 1}
+    assert col(payload, "c")["numeric"] is None  # booleans are not numbers
     codes = {warning["code"] for warning in payload["warnings"]}
     assert "formula_cells" in codes
     assert "merged_cells" in codes
@@ -1090,3 +1091,79 @@ def test_all_readers_leave_sources_byte_identical(tmp_path):
         run_json(args)
     assert {path: sha256(path) for path in files} == before
     assert sorted(p.name for p in tmp_path.iterdir()) == names_before
+
+
+# ----- review follow-ups: non-finite rule values, contract safety, WAL -----
+
+
+def test_nonfinite_rule_bounds_are_errors(tmp_path):
+    src = write(tmp_path / "n.csv", "v\n1\n")
+    for bound in (".nan", ".inf", "-.inf"):
+        rules = write(tmp_path / "n.yml", f"columns:\n  v:\n    min: {bound}\n")
+        payload, proc = run_json([src, "--rules", rules], expect=2)
+        assert payload["overall"]["status"] == "error"
+        assert "finite" in payload["errors"][0]["message"].lower()
+        assert "Traceback" not in proc.stderr  # JSON contract holds, no crash
+
+
+def test_nonfinite_allowed_values_are_errors(tmp_path):
+    src = write(tmp_path / "n.csv", "v\n1\n")
+    rules = write(tmp_path / "n.yml", "columns:\n  v:\n    allowed: [.inf]\n")
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+    assert "finite" in payload["errors"][0]["message"].lower()
+
+
+def test_min_max_reject_nonfinite_values(tmp_path):
+    src = write(tmp_path / "inf.csv", "v\n1e999\n")
+    rules = write(tmp_path / "inf.yml", "columns:\n  v:\n    min: 0\n    max: 100\n")
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+    for rule in ("min", "max"):
+        c = check(payload, rule, "v")
+        assert c["evaluated"] == 1
+        assert c["violations"] == 1
+        assert c["row_refs"] == [1]
+    assert "nonfinite_values" in {w["code"] for w in payload["warnings"]}
+
+
+def test_serialisation_fallback_keeps_json_contract(tmp_path, dq, monkeypatch):
+    import io as iolib
+    from contextlib import redirect_stderr, redirect_stdout
+
+    src = write(tmp_path / "a.csv", "a\n1\n")
+    real_render = dq.render
+    calls = {"count": 0}
+
+    def flaky_render(payload):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ValueError("simulated non-serialisable content")
+        return real_render(payload)
+
+    monkeypatch.setattr(dq, "render", flaky_render)
+    out, err = iolib.StringIO(), iolib.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = dq.main([str(src)])
+    assert code == 2
+    payload = parse_strict(out.getvalue())
+    assert payload["errors"][0]["code"] == "internal_error"
+    assert payload["overall"]["exit_code"] == 2
+
+
+def test_sqlite_wal_database_reads_and_database_file_unchanged(tmp_path):
+    db = tmp_path / "wal.sqlite"
+    connection = sqlite3.connect(db)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE t (a INTEGER, b TEXT)")
+        connection.execute("INSERT INTO t VALUES (1,'x'),(2,NULL)")
+        connection.commit()
+    finally:
+        connection.close()
+    before = sha256(db)
+    payload, _ = run_json([db, "--table", "t"])
+    assert payload["profile"]["rows"] == 2
+    assert sha256(db) == before  # the database file itself is never written
+    # SQLite may create transient -shm/-wal sidecars for WAL databases; that is
+    # standard behavior and documented in references/RULES.md.
+    extras = {p.name for p in tmp_path.iterdir() if p.name.startswith("wal.sqlite")}
+    assert extras <= {"wal.sqlite", "wal.sqlite-shm", "wal.sqlite-wal"}

@@ -880,6 +880,11 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                         "invalid_rules",
                         f"invalid rule value for column {name!r}: {rule!r} must be a number",
                     )
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise DqError(
+                        "invalid_rules",
+                        f"invalid rule value for column {name!r}: {rule!r} must be a finite number",
+                    )
                 compiled[rule] = value
             elif rule == "allowed":
                 ok = (
@@ -892,6 +897,13 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                         "invalid_rules",
                         f"invalid allowed values for column {name!r}: must be a "
                         "non-empty list of strings, numbers, or booleans",
+                    )
+                if any(
+                    isinstance(v, float) and not math.isfinite(v) for v in value
+                ):
+                    raise DqError(
+                        "invalid_rules",
+                        f"invalid allowed values for column {name!r}: numbers must be finite",
                     )
                 compiled[rule] = list(value)
             elif rule == "regex":
@@ -1060,7 +1072,11 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
                 violating = []
                 for position in present_positions:
                     number = parse_number(values[position - 1])
-                    if number is None:
+                    if number is None or (
+                        isinstance(number, float) and not math.isfinite(number)
+                    ):
+                        # non-numeric and non-finite values are never valid for
+                        # an inclusive numeric bounds check
                         violating.append(position)
                     elif rule == "min" and number < bound:
                         violating.append(position)
@@ -1174,10 +1190,14 @@ def build_payload(
     return payload, exit_code
 
 
-def emit(payload: dict) -> None:
-    text = json.dumps(
+def render(payload: dict) -> str:
+    """Serialise the report; raises ValueError on non-strict-JSON content."""
+    return json.dumps(
         payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
     ) + "\n"
+
+
+def emit(text: str) -> None:
     buffer = getattr(sys.stdout, "buffer", None)
     if buffer is not None:
         buffer.write(text.encode("utf-8"))
@@ -1324,7 +1344,17 @@ def main(argv: list[str] | None = None) -> int:
             "internal_error", f"unexpected error: {type(exc).__name__}: {exc}"
         )
         exit_code = 2
-    emit(payload)
+    try:
+        text = render(payload)
+    except (TypeError, ValueError) as exc:
+        # The JSON contract wins over any unforeseen non-serialisable content.
+        traceback.print_exc()
+        payload = error_payload(
+            "internal_error", f"report could not be serialised: {exc}"
+        )
+        exit_code = 2
+        text = render(payload)
+    emit(text)
     if exit_code == 2:
         first = payload["errors"][0]
         print(f"dq.py: error [{first['code']}]: {first['message']}", file=sys.stderr)

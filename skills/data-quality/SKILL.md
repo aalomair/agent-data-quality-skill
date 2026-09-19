@@ -65,7 +65,7 @@ Rule semantics and evidence rules: `references/RULES.md`. Supported inputs, limi
 ## Pitfalls
 
 - `--examples` output contains raw source values and is not anonymized or automatically safe to share.
-- Row references are run-local record positions (1-based; text sources use physical line numbers), not permanent row IDs.
+- Row references are run-local record positions (1-based; text sources use physical line numbers; JSONL skips blank lines so its positions count records), not permanent row IDs.
 - Exit 0 never proves dataset quality: rules may be absent, or checks may be `not_evaluated` (empty data or no eligible values).
 - XLSX formulas are never executed; their cached values may be missing or stale, and the report warns when formulas are present.
 - Sources beyond the documented limits (50 MiB / 200,000 rows) are rejected, never sampled or truncated.
