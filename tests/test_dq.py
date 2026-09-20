@@ -495,6 +495,40 @@ def test_malformed_csv_structures(tmp_path, name, content, needle):
         assert needle in payload["errors"][0]["message"].lower()
 
 
+@pytest.mark.parametrize(
+    "name,content",
+    [
+        ("long_first_row.csv", "a,b\n1,2,3\n"),
+        ("long_first_row_more.csv", "a,b\n1,2,3\n4,5\n"),
+        ("trailing_comma.csv", "a,b\n1,2,\n"),
+        ("long_first_row.tsv", "a\tb\n1\t2\t3\n"),
+    ],
+)
+def test_records_wider_than_the_header_are_rejected(tmp_path, name, content):
+    # Regression: pandas silently shifted values for a wide first data record
+    # (it treats the leading field as an index) instead of failing, so the
+    # extra field was dropped and the remaining values moved left.
+    src = write(tmp_path / name, content)
+    payload, _ = run_json([src], expect=2)
+    message = payload["errors"][0]["message"].lower()
+    assert "fields" in message and "header" in message
+    assert payload["overall"]["status"] == "error"
+
+
+def test_wide_first_record_values_are_never_reported(tmp_path):
+    src = write(tmp_path / "shift.csv", "a,b\n1,2,3\n")
+    payload, _ = run_json([src], expect=2)
+    assert payload["profile"] is None
+
+
+def test_quoted_delimiter_and_large_fields_still_parse(tmp_path):
+    big = "x" * 200_000  # above the csv module's default field-size limit
+    src = write(tmp_path / "wide_field.csv", f'a,b\n1,"2,3"\n2,{big}\n')
+    payload, _ = run_json([src])
+    assert payload["profile"]["rows"] == 2
+    assert col(payload, "b")["string_length"]["max"] == 200_000
+
+
 def test_file_without_trailing_newline_is_valid(tmp_path):
     src = write(tmp_path / "plain.csv", "a,b\n1,2")
     payload, _ = run_json([src])

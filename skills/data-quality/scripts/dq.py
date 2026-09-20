@@ -267,6 +267,7 @@ def _check_row_limit(rows: list[list[Any]]) -> None:
 
 
 def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> list[str]:
+    previous_field_limit = csv.field_size_limit(MAX_SOURCE_BYTES)
     try:
         with path.open("r", encoding=encoding, newline="") as handle:
             reader = csv.reader(handle, delimiter=delimiter)
@@ -274,11 +275,28 @@ def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> lis
                 header = next(reader)
             except StopIteration:
                 raise DqError("malformed_source", "empty source: no header row found")
+            # Records wider than the header are malformed and are rejected here.
+            # The pandas parser only fails on such rows after the first data
+            # record; for the first one it treats the leading field as an index
+            # and silently shifts or drops values, so the width is checked while
+            # the file is already open (bounded to the row limit).
+            width = len(header)
+            for ordinal, record in enumerate(reader, start=1):
+                if len(record) > width:
+                    raise DqError(
+                        "malformed_source",
+                        f"record {ordinal} has {len(record)} fields; the header "
+                        f"defines {width} columns",
+                    )
+                if ordinal >= MAX_ROWS:
+                    break
     except UnicodeDecodeError as exc:
         raise DqError(
             "decode_error",
             f"source cannot be decoded with encoding {encoding!r}: {exc}",
         )
+    finally:
+        csv.field_size_limit(previous_field_limit)
     if not header:
         raise DqError("malformed_source", "empty header row in source")
     for position, name in enumerate(header, start=1):
