@@ -22,8 +22,8 @@ tests/test_dq.py               pytest suite (CLI-level + unit tests)
 
 | Source | Extensions | Notes |
 |---|---|---|
-| CSV / TSV | `.csv`, `.tsv` | one header row; duplicate/empty headers rejected; blank lines preserved as all-empty records; short rows padded as missing |
-| Excel | `.xlsx` | `--sheet NAME` or the first worksheet (named explicitly in the report); formulas never executed (presence reported, cached values may be missing/stale); merged-cell warnings |
+| CSV / TSV | `.csv`, `.tsv` | one header row; duplicate/empty headers rejected; blank lines preserved as all-empty records; short rows padded as missing; records **wider** than the header are rejected, never truncated or shifted |
+| Excel | `.xlsx` | `--sheet NAME` or the first worksheet (named explicitly in the report); formulas never executed (presence reported, cached values may be missing/stale); merged-cell warnings; a sheet whose data rows are wider than the header row is rejected (the extra column has no header name) |
 | JSON | `.json` | array of flat records; scalar values only — nested structures rejected |
 | JSONL / NDJSON | `.jsonl`, `.ndjson` | one flat record per nonblank line |
 | Text / Markdown | `.txt`, `.md`, `.markdown` | each line is a record in a `text` column; blank lines preserved; extra statistics (blank lines, duplicate lines, length range, unusual control characters) |
@@ -123,7 +123,7 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 ## Limits
 
 - Sources above **50 MiB** or **200,000 rows** are rejected (exit 2) — never sampled, truncated, or reported as if complete. Reads are bounded per format where possible; there is no streaming framework and no promised hard memory ceiling.
-- One sheet or one table per run. Duplicate or empty headers are rejected, not renamed.
+- One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected (exit 2) — data is never truncated, shifted, or silently dropped.
 - Text encoding: strict UTF-8 with BOM acceptance by default; `--encoding NAME` adds other encodings strictly — no lossy replacement or auto-detection.
 
 ## Read-only boundaries
@@ -145,9 +145,9 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pyarrow 25.0.1, pytest 9.1.1.
 
-- **Test suite** — `python -m pytest tests/ -q` passes (93 tests): every reader and rule, clean/dirty cases, missing/blank/literal-NA distinctions, Arabic/BOM, leading zeros, mixed numerics, duplicate semantics, empty data, invalid inputs and rules (including non-finite rule bounds), JSON/exit-code contract, evidence limits, adversarial cell content, unchanged source bytes, WAL-mode SQLite, and SQLite read-only enforcement (write attempt fails).
+- **Test suite** — `python -m pytest tests/ -q` passes (99 tests): every reader and rule, clean/dirty cases, missing/blank/literal-NA distinctions, Arabic/BOM, leading zeros, mixed numerics, duplicate semantics, empty data, invalid inputs and rules (including non-finite rule bounds and records wider than the header, which are rejected rather than shifted), JSON/exit-code contract, evidence limits, adversarial cell content, unchanged source bytes, WAL-mode SQLite, and SQLite read-only enforcement (write attempt fails).
 - **Copied-folder test** — `skills/data-quality/` was copied to an unrelated directory, installed into a clean venv **from `requirements.txt` only**, and run from an unrelated working directory: profile+rules run produced the expected exit 1 and matching check summary; the Parquet path returned the specific `missing_dependency` error because pyarrow was absent (as designed). No repository-root dependency.
-- **Hermes Agent harness (this machine)** — `hermes skills list` registers the installed skill as enabled; three end-to-end agent sessions executed the skill through the harness (one loading `SKILL.md` explicitly; two via `hermes -z --skills data-quality`, where the harness preloaded the skill **by name** and the agent resolved and ran the installed `scripts/dq.py` itself — including a re-run against the post-review helper). All produced the expected per-check report (exit 1; 3 passed / 3 failed / 0 not_evaluated). Note: Hermes one-shot mode (`-z`) does not inject a skills index — pass `--skills data-quality`, or install into the host's skills directory for regular sessions.
+- **Hermes Agent harness (this machine; isolated scratch `HERMES_HOME`, never a live profile)** — the bundle was copied into a scratch home's skills directory and driven with `hermes -z … --skills data-quality`: the harness preloaded the skill by name, the agent resolved and ran the installed `scripts/dq.py` itself, and reported exit 1 with the expected per-check lines (3 passed / 3 failed / 0 not_evaluated). Latest run: against the final revision after the record-width fix (`dq.py` sha256 prefix `e55118ac`); the earlier build runs produced the same report, and `hermes skills list` in that scratch home registers `data-quality` as enabled. Nothing was installed into a live profile's skills directory. Note: Hermes one-shot mode (`-z`) does not inject a skills index — pass `--skills data-quality`, or install into the host's skills directory for regular sessions.
 - **Format compatibility vs tested harnesses** — the bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`), which does not imply other hosts were exercised. Codex, Claude Code, and all other hosts are **untested** by this repository.
 
 ## Development
@@ -160,11 +160,17 @@ python -m pytest tests/ -q
 
 CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14.
 
-## Backlog (deliberately deferred)
+## Roadmap (deferred by design)
 
-- After real use, add exactly one of: cross-column/reference checks **or** one specific external database connector.
-- Baseline comparison once repeated comparisons are actually needed.
-- Richer Excel handling; text semantics; cleaning into a separate output file.
+v0.1.0 stops at the scope described above. The following are deliberately **not** implemented, and no extension infrastructure is being designed for them now:
+
+- **Baseline comparison** — no stored profiles, no comparison against a previous edition of a dataset.
+- **Drift / distribution-change detection** — no change detection between runs.
+- **IQR / statistical anomaly detection** — outliers are not flagged; only the rules the user supplies are checked.
+- **SQLAlchemy or any live non-SQLite database access** — PostgreSQL, MySQL, and SQL Server go through an export to a supported file first.
+- **Remediation / repair** — the skill never modifies data; findings and suggested fixes are explanations only.
+
+Add these only on a demonstrated need: one of cross-column/reference checks **or** one specific external database connector first, then baseline comparison once repeated comparisons are actually required, then richer Excel handling, text semantics, or cleaning into a separate output file.
 
 ## License
 

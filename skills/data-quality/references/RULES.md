@@ -58,7 +58,7 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 ## Evidence and limits
 
 - `row_refs`: up to **10** run-local 1-based positions within the inspected records. For TXT/Markdown sources these are the physical line numbers; JSONL skips blank lines, so its positions count records rather than physical lines; SQLite positions are scan offsets, **not row IDs**.
-- `examples`: opt-in via `--examples N` (0–5). Up to 5 distinct violating values per check, each truncated to 100 characters with an `…` marker. Missing-value violations carry no examples.
+- `examples`: opt-in via `--examples N` (default 0; a negative value is an error, values above 5 are capped at 5). Up to 5 distinct violating values per check, each truncated to 100 characters with an `…` marker. Missing-value violations carry no examples.
 - Statuses: `passed`, `failed`, `not_evaluated`. Overall status: `error` (exit 2), `failed` (exit 1), `passed` (rules executed and at least one passed, none failed), `inspected` (no rules, or no check produced a passing verdict — e.g. empty data).
 - Empty datasets: percentages are `null`; no check can pass; nothing about quality is implied.
 
