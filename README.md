@@ -158,7 +158,9 @@ python -m pip install -r skills/data-quality/scripts/requirements.txt pytest pya
 python -m pytest tests/ -q
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14.
+If `python -m venv` produces an environment without pip (some distro builds omit `ensurepip`), create it with `uv venv` and install with `uv pip install` — the dependency set is identical.
+
+CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14. That job's dependency set and test command were executed locally in a fresh venv (99 passed); the GitHub runner itself has not been exercised, because no remote is configured.
 
 ## Roadmap (deferred by design)
 
