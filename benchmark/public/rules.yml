@@ -1,0 +1,29 @@
+# Benchmark rules for the public UCI Adult fixture (benchmark/public/adult.csv).
+#
+# They exist only to make the four injected defect types observable; they are
+# not claimed to be business rules for the Adult dataset:
+#   * 10 blanked `age` cells          -> required  (missing value)
+#   * 10 non-numeric `age` values     -> min       (invalid numerics fail)
+#   * 10 unknown `workclass` values   -> allowed   (exact, case-sensitive)
+#   * 10 appended duplicate rows      -> dataset.max_duplicate_rows
+#
+# max_duplicate_rows is set to 24 because the published UCI file already
+# contains 24 exact duplicate rows; allowing them keeps the benchmark measuring
+# only what it injected.
+dataset:
+  max_duplicate_rows: 24
+columns:
+  age:
+    required: true
+    min: 17
+  workclass:
+    allowed:
+      - "?"
+      - Federal-gov
+      - Local-gov
+      - Never-worked
+      - Private
+      - Self-emp-inc
+      - Self-emp-not-inc
+      - State-gov
+      - Without-pay
