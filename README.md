@@ -16,6 +16,9 @@ skills/data-quality/           the portable skill bundle
   scripts/requirements.txt     runtime dependencies
   references/RULES.md          rule semantics, evidence rules, read-only guarantees
 tests/test_dq.py               pytest suite (CLI-level + unit tests)
+benchmark/run.py               defect-injection benchmark (UCI Adult + ERPNext)
+benchmark/public/              UCI Adult fixture + benchmark rules
+benchmark/private/             local-only datasets (gitignored)
 ```
 
 ## Supported inputs
@@ -160,7 +163,7 @@ python -m pytest tests/ -q
 
 If `python -m venv` produces an environment without pip (some distro builds omit `ensurepip`), create it with `uv venv` and install with `uv pip install` — the dependency set is identical.
 
-CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14. That job's dependency set and test command were executed locally in a fresh venv (99 passed); the GitHub runner itself has not been exercised, because no remote is configured.
+CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14 — it has passed on GitHub Actions for every push of this repository so far (99 passed per run: push run 35498139984, tag run 35498228065), and the same dependency set and test command were reproduced locally in a fresh venv.
 
 ## Roadmap (deferred by design)
 
