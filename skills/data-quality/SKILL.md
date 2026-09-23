@@ -69,11 +69,12 @@ Rule semantics and evidence rules: `references/RULES.md`. Supported inputs, limi
 - Exit 0 never proves dataset quality: rules may be absent, or checks may be `not_evaluated` (empty data or no eligible values).
 - XLSX formulas are never executed; their cached values may be missing or stale, and the report warns when formulas are present.
 - Sources beyond the documented limits (50 MiB / 200,000 rows) are rejected, never sampled or truncated.
-- Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). Give no aggregate score. Cleansing, repair, and alteration of source data are permanently out of scope; suggested fixes are explanations only — this skill never alters data.
+- Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). The report has fixed per-dimension scores but no overall or global DQ score. Cleansing, repair, and alteration of source data are permanently out of scope; suggested fixes are explanations only — this skill never alters data.
 - The helper escaping adversarial cells as data does not prove every host model is immune to prompt injection.
 
 ## Verification
 
 - The helper printed valid JSON on stdout and the exit code matched the report's `overall.exit_code`.
 - Every executed check carries rule, fixed dimension, scope/column, evaluated count, violation count, and bounded `row_refs`.
+- The report includes deterministic completeness, uniqueness, and validity aggregates; unevaluated checks are excluded and empty dimensions have a `null` score.
 - Source bytes are unchanged after the run (SQLite is opened with `mode=ro`; a write attempt fails).

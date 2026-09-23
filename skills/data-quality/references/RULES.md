@@ -17,6 +17,13 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - Output order: dataset rule first, then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
 - Each check carries a fixed dimension: `required` and `max_null_pct` are `completeness`; `unique` and `max_duplicate_rows` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
 
+## Dimension scores
+
+- The top-level `dimensions` object always contains `completeness`, `uniqueness`, and `validity`.
+- Each dimension sums only checks whose status is not `not_evaluated`; its `evaluated` and `violations` fields are the corresponding sums.
+- `score` = `(sum(evaluated) - sum(violations)) / sum(evaluated) * 100`, rounded to 2 decimals after calculation. A dimension with no evaluated checks has `score: null`.
+- There is no overall or global DQ score.
+
 ## `dataset.max_duplicate_rows`
 
 - Duplicate rows = **extra exact rows beyond the first occurrence**: `rows − distinct row keys`.

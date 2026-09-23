@@ -74,6 +74,7 @@ RULE_DIMENSIONS = {
     "allowed": "validity",
     "regex": "validity",
 }
+DIMENSION_NAMES = ("completeness", "uniqueness", "validity")
 TYPE_RULE_VALUES = frozenset({"integer", "number", "string", "boolean"})
 
 TEXT_FORMATS = frozenset({"csv", "tsv", "json", "jsonl", "text"})
@@ -1262,6 +1263,10 @@ def error_payload(code: str, message: str) -> dict:
         "selection": None,
         "profile": None,
         "checks": [],
+        "dimensions": {
+            dimension: {"score": None, "evaluated": 0, "violations": 0}
+            for dimension in DIMENSION_NAMES
+        },
         "warnings": [],
         "errors": [{"code": code, "message": message}],
         "overall": {
@@ -1289,6 +1294,29 @@ def build_payload(
     passed = sum(1 for check in checks if check["status"] == "passed")
     failed = sum(1 for check in checks if check["status"] == "failed")
     not_evaluated = sum(1 for check in checks if check["status"] == "not_evaluated")
+    dimensions = {}
+    for dimension in DIMENSION_NAMES:
+        evaluated = sum(
+            check["evaluated"]
+            for check in checks
+            if check["dimension"] == dimension
+            and check["status"] != "not_evaluated"
+        )
+        violations = sum(
+            check["violations"]
+            for check in checks
+            if check["dimension"] == dimension
+            and check["status"] != "not_evaluated"
+        )
+        dimensions[dimension] = {
+            "score": (
+                None
+                if evaluated == 0
+                else round((evaluated - violations) / evaluated * 100, 2)
+            ),
+            "evaluated": evaluated,
+            "violations": violations,
+        }
     if failed:
         status, exit_code = "failed", 1
     elif passed:
@@ -1310,6 +1338,7 @@ def build_payload(
         "selection": selection,
         "profile": profile,
         "checks": checks,
+        "dimensions": dimensions,
         "warnings": sorted(warnings, key=lambda item: (item["code"], item["message"])),
         "errors": [],
         "overall": {

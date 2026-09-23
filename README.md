@@ -79,7 +79,7 @@ YAML
      {"name":"name","missing":1,"missing_percent":25.0,...,"numeric":null,"string_length":{"min":2,"max":5}},
      {"name":"age","missing":1,...,"numeric":{"count":2,"min":25,"max":30,"mean":27.5}}],
    "duplicate_rows":0,"text":null},
- "checks":[],"warnings":[],"errors":[],
+ "checks":[],"dimensions":{"completeness":{"score":null,"evaluated":0,"violations":0},"uniqueness":{"score":null,"evaluated":0,"violations":0},"validity":{"score":null,"evaluated":0,"violations":0}},"warnings":[],"errors":[],
  "overall":{"status":"inspected","exit_code":0,"rules_applied":false,...}}
 ```
 
@@ -121,7 +121,9 @@ Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `mi
 
 ## Output contract
 
-One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters each) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
+One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters each) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
+
+`dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. There is no overall or global DQ score.
 
 ## Limits
 
@@ -142,7 +144,7 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 - Baselines, drift, distribution changes, or outlier detection — deferred by design.
 - Cleansing, repair, or alteration of source data — permanently out of scope by design; findings and suggested fixes are explanations only.
 - XLSX formulas are not evaluated; cached values may be missing or stale (a warning says so).
-- No aggregate score, and exit 0 alone never proves dataset quality.
+- No overall or global DQ score; exit 0 alone never proves dataset quality.
 - Escaping adversarial cells as data does not make every host model immune to prompt injection.
 
 ## Verification status (as of 2026-09-20)

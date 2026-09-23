@@ -181,6 +181,7 @@ def test_top_level_keys_are_stable(basic_csv):
         "selection",
         "profile",
         "checks",
+        "dimensions",
         "warnings",
         "errors",
         "overall",
@@ -292,6 +293,73 @@ columns:
     }
     assert {item["rule"]: item["dimension"] for item in payload["checks"]} == expected
     assert check(payload, "max_duplicate_rows")["scope"] == "dataset"
+
+
+def test_dimensions_aggregate_mixed_pass_and_fail_checks_without_global_score(
+    basic_csv, basic_rules
+):
+    payload, _ = run_json([basic_csv, "--rules", basic_rules], expect=1)
+
+    assert payload["dimensions"] == {
+        "completeness": {"score": 87.5, "evaluated": 8, "violations": 1},
+        "uniqueness": {"score": 100.0, "evaluated": 8, "violations": 0},
+        "validity": {"score": 66.67, "evaluated": 6, "violations": 2},
+    }
+    assert "score" not in payload["overall"]
+    assert "overall_score" not in payload
+
+
+def test_dimensions_exclude_not_evaluated_checks(tmp_path):
+    src = write(tmp_path / "not-evaluated.csv", "missing,good\n,ok\n,other\n")
+    rules = write(
+        tmp_path / "not-evaluated.yml",
+        "columns:\n  missing:\n    unique: true\n  good:\n    unique: true\n",
+    )
+    payload, _ = run_json([src, "--rules", rules], expect=0)
+
+    assert check(payload, "unique", "missing")["status"] == "not_evaluated"
+    assert payload["dimensions"]["uniqueness"] == {
+        "score": 100.0,
+        "evaluated": 2,
+        "violations": 0,
+    }
+
+
+def test_dimensions_with_no_checks_have_null_score(tmp_path):
+    src = write(tmp_path / "one.csv", "v\nok\n")
+    rules = write(tmp_path / "one.yml", "columns:\n  v:\n    required: true\n")
+    payload, _ = run_json([src, "--rules", rules], expect=0)
+
+    assert payload["dimensions"]["completeness"] == {
+        "score": 100.0,
+        "evaluated": 1,
+        "violations": 0,
+    }
+    assert payload["dimensions"]["uniqueness"] == {
+        "score": None,
+        "evaluated": 0,
+        "violations": 0,
+    }
+    assert payload["dimensions"]["validity"] == {
+        "score": None,
+        "evaluated": 0,
+        "violations": 0,
+    }
+
+
+def test_dimension_aggregation_is_deterministic(tmp_path):
+    src = write(tmp_path / "deterministic.csv", "required,allowed\n,ok\nx,bad\nx,ok\n")
+    rules = write(
+        tmp_path / "deterministic.yml",
+        "columns:\n  required:\n    required: true\n  allowed:\n    allowed: [ok]\n",
+    )
+
+    first, _ = run_json([src, "--rules", rules], expect=1)
+    second, _ = run_json([src, "--rules", rules], expect=1)
+
+    assert first["dimensions"] == second["dimensions"]
+    assert first["dimensions"]["completeness"]["score"] == 66.67
+    assert first["dimensions"]["validity"]["score"] == 66.67
 
 
 def test_rules_all_pass_exit_zero(tmp_path):
