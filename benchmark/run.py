@@ -3,8 +3,10 @@
 
 The harness runs the shipped CLI (skills/data-quality/scripts/dq.py) on a real
 dataset, injects four defect types into a *temporary copy*, and compares the
-violations the skill reports with the defects that were injected. The skill is
-never modified and the datasets are never written to.
+violations the skill reports with the defects that were injected. The type
+check intentionally observes the existing invalid-number injection; it does
+not add a second mutation mechanism. The skill is never modified and the
+datasets are never written to.
 
 Datasets:
 
@@ -147,7 +149,7 @@ def report(name: str, rows: int | None, injected: int, observed: int,
     print(name)
     if rows is not None:
         print(f"Rows: {rows:,}")
-    print(f"Injected: {injected}")
+    print(f"Expected detections: {injected}")
     print(f"Detected: {observed}")
     print(f"Unexpected: {unexpected}")
     print(f"Source unchanged: {'PASS' if unchanged else 'FAIL'}")
@@ -180,6 +182,7 @@ def run_public(verbose: bool) -> bool:
 
     expected = {
         "required:age": INJECT_PER_TYPE,
+        "type:age": INJECT_PER_TYPE,
         "min:age": INJECT_PER_TYPE,
         "allowed:workclass": INJECT_PER_TYPE,
         "max_duplicate_rows:dataset": INJECT_PER_TYPE,
@@ -211,7 +214,12 @@ def derive_rules(header: list[str], rows: list[list[str]]
     """Pick the first suitable columns; never invent business rules."""
     columns = list(zip(*rows)) if rows else [[] for _ in header]
     skipped: list[str] = []
-    rules: dict[str, object] = {"required": None, "numeric": None, "category": None}
+    rules: dict[str, object] = {
+        "required": None,
+        "numeric": None,
+        "category": None,
+        "type": None,
+    }
     notes: dict[str, object] = {}
 
     for position, name in enumerate(header):
@@ -232,6 +240,7 @@ def derive_rules(header: list[str], rows: list[list[str]]
         if values and all(number is not None for number in parsed):
             numeric_values = [number for number in parsed if number is not None]
             rules["numeric"] = name
+            rules["type"] = "number"
             rules["min"] = min(numeric_values)
             notes["numeric_column"] = name
             notes["min"] = min(numeric_values)
@@ -269,7 +278,11 @@ def rules_yaml(rules: dict) -> str:
     if rules["required"]:
         lines += [f"  {rules['required']}:", "    required: true"]
     if rules["numeric"]:
-        lines += [f"  {rules['numeric']}:", f"    min: {rules['min']}"]
+        lines += [
+            f"  {rules['numeric']}:",
+            f"    type: {rules['type']}",
+            f"    min: {rules['min']}",
+        ]
     if rules["category"]:
         lines += [f"  {rules['category']}:", "    allowed:"]
         lines += [f"      - {json.dumps(value)}" for value in rules["allowed"]]
@@ -308,6 +321,7 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
         for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):
             corrupted[position][target] = INVALID_NUMBER
         expected[f"min:{rules['numeric']}"] = INJECT_PER_TYPE
+        expected[f"type:{rules['numeric']}"] = INJECT_PER_TYPE
     if rules["category"]:
         target = index[rules["category"]]
         for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):

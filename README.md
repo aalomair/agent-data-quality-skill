@@ -117,7 +117,7 @@ Exit codes: `0` = inspected / no failed rules · `1` = rule violations · `2` = 
 
 ## Rules
 
-Exactly six column rules — `required`, `unique`, `min`, `max`, `allowed`, `regex` — and one dataset rule, `max_duplicate_rows`. Counting semantics (missing values, duplicate groups, numeric parsing, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
+Exactly seven column rules — `required`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and one dataset rule, `max_duplicate_rows`. Counting semantics (missing values, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
 
 ## Output contract
 

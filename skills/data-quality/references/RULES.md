@@ -13,7 +13,7 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - `required` evaluates **all rows**; each missing value is a violation.
 - Every other column rule **excludes missing values** from evaluation. Combine with `required` when missing values must also fail.
 - `evaluated` = number of eligible (nonmissing) values for the rule. **No eligible values → status `not_evaluated`**, never `passed`.
-- Output order: dataset rule first, then columns in the rules file's order; within a column: required, unique, min, max, allowed, regex.
+- Output order: dataset rule first, then columns in the rules file's order; within a column: required, unique, type, min, max, allowed, regex.
 
 ## `dataset.max_duplicate_rows`
 
@@ -30,6 +30,14 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 ### `unique`
 - Violations count **every nonmissing value that sits in a repeated-value group**: `[a, a, b]` → 2 violations; `[a, a, a]` → 3.
 - Value equality follows the same scalar rules as duplicate-row detection.
+
+### `type`
+- The expected type must be one of `integer`, `number`, `string`, or `boolean`.
+- Missing values are excluded from evaluation.
+- `integer` accepts native integers (but not booleans) and strings matching an optional sign followed by digits (`"123"` is valid; `"123.5"` is not).
+- `number` accepts finite native integers/floats (but not booleans) and strings matching the numeric grammar used by `min`/`max` (`"123"`, `"123.5"`, and exponent forms are valid).
+- `string` accepts strings, including numeric-looking strings. `boolean` accepts native booleans only; booleans are never numbers, and strings such as `"true"` are not converted.
+- Date and datetime type checking is not supported yet; those values fail the four supported type rules unless they are missing.
 
 ### `min` / `max`
 - Inclusive numeric bounds: a violation when `value < min` (or `value > max`).

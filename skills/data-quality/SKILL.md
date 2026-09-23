@@ -18,7 +18,7 @@ Portability note: this bundle follows the portable Agent Skills layout (`SKILL.m
 
 - The user asks for a data-quality profile, validation, or "is this file clean?" check on a local dataset.
 - You need deterministic counts (missing values, duplicates, rule violations) to cite in a report.
-- The user supplies or requests explicit acceptance rules: required, unique, min, max, allowed, regex, max_duplicate_rows.
+- The user supplies or requests explicit acceptance rules: required, unique, type, min, max, allowed, regex, max_duplicate_rows.
 
 Don't use for: repairing or cleaning data, comparing editions (no baselines/drift detection), semantic or factual validation of text, or non-SQLite databases (export to a supported file first).
 

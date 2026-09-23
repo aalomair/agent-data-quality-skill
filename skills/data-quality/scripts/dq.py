@@ -50,9 +50,10 @@ MAX_EXAMPLES = 5  # example values per check (--examples cap)
 MAX_EXAMPLE_CHARS = 100
 DEFAULT_ENCODING = "utf-8-sig"
 
-RULE_ORDER = ("required", "unique", "min", "max", "allowed", "regex")
+RULE_ORDER = ("required", "unique", "type", "min", "max", "allowed", "regex")
 COLUMN_RULES = frozenset(RULE_ORDER)
 DATASET_RULES = frozenset({"max_duplicate_rows"})
+TYPE_RULE_VALUES = frozenset({"integer", "number", "string", "boolean"})
 
 TEXT_FORMATS = frozenset({"csv", "tsv", "json", "jsonl", "text"})
 TEXT_COLUMN = "text"
@@ -199,6 +200,25 @@ def parse_number(value: Any) -> int | float | None:
             except ValueError:
                 return None
     return None
+
+
+def _matches_type(value: Any, expected: str) -> bool:
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return True
+        return isinstance(value, str) and _INT_RE.fullmatch(value.strip()) is not None
+    if expected == "number":
+        number = parse_number(value)
+        return number is not None and (
+            not isinstance(number, float) or math.isfinite(number)
+        )
+    return False
 
 
 def value_key(value: Any) -> tuple:
@@ -904,6 +924,14 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                         f"invalid rule value for column {name!r}: {rule!r} must be a finite number",
                     )
                 compiled[rule] = value
+            elif rule == "type":
+                if not isinstance(value, str) or value not in TYPE_RULE_VALUES:
+                    raise DqError(
+                        "invalid_rules",
+                        f"invalid type for column {name!r}: must be one of "
+                        "integer, number, string, boolean",
+                    )
+                compiled[rule] = value
             elif rule == "allowed":
                 ok = (
                     isinstance(value, list)
@@ -1082,6 +1110,25 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
             checks.append(
                 _column_check("unique", name, evaluated, violating, values, None,
                               examples_requested)
+            )
+
+        if "type" in rule_values:
+            expected_type = rule_values["type"]
+            violating = [
+                position
+                for position in present_positions
+                if not _matches_type(values[position - 1], expected_type)
+            ]
+            checks.append(
+                _column_check(
+                    "type",
+                    name,
+                    evaluated,
+                    violating,
+                    values,
+                    {"expected_type": expected_type},
+                    examples_requested,
+                )
             )
 
         for rule in ("min", "max"):

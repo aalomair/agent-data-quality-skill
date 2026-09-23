@@ -421,6 +421,45 @@ def test_booleans_are_not_numbers(tmp_path):
     assert col(payload, "v")["numeric"] is None  # "True" is not a number
 
 
+def test_type_rule_accepts_numeric_strings_and_keeps_booleans_distinct(tmp_path):
+    records = [
+        {"integer": 123, "number": 123.5, "string": "123", "boolean": True, "missing": None},
+        {"integer": "123", "number": "123", "string": "hello", "boolean": False, "missing": ""},
+        {"integer": "123.5", "number": True, "string": 7, "boolean": 1, "missing": "bad"},
+        {"integer": True, "number": "not-a-number", "string": None, "boolean": "true", "missing": "  "},
+    ]
+    src = write(tmp_path / "types.json", json.dumps(records))
+    rules = write(
+        tmp_path / "types.yml",
+        """\
+columns:
+  integer:
+    type: integer
+  number:
+    type: number
+  string:
+    type: string
+  boolean:
+    type: boolean
+  missing:
+    type: number
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    integer = check(payload, "type", "integer")
+    assert (integer["evaluated"], integer["violations"], integer["row_refs"]) == (4, 2, [3, 4])
+    number = check(payload, "type", "number")
+    assert (number["evaluated"], number["violations"], number["row_refs"]) == (4, 2, [3, 4])
+    string = check(payload, "type", "string")
+    assert (string["evaluated"], string["violations"], string["row_refs"]) == (3, 1, [3])
+    boolean = check(payload, "type", "boolean")
+    assert (boolean["evaluated"], boolean["violations"], boolean["row_refs"]) == (4, 2, [3, 4])
+    missing = check(payload, "type", "missing")
+    assert (missing["evaluated"], missing["violations"], missing["row_refs"]) == (1, 1, [3])
+
+
 # --------------------------------------------------------------------------
 # Evidence limits and examples
 # --------------------------------------------------------------------------
@@ -551,6 +590,7 @@ def test_unsupported_suffix_is_error(tmp_path):
         ("columns:\n  a:\n    min: 5\n    max: 1\n", "min greater than max"),
         ("columns:\n  a:\n    allowed: [null]\n", "allowed"),
         ("columns:\n  a:\n    allowed: []\n", ""),
+        ("columns:\n  a:\n    type: date\n", "integer"),
         ("top: 1\n", "unknown top-level key"),
         ("dataset:\n  max_duplicate_rows: -1\n", "max_duplicate_rows"),
         ("columns:\n  a:\n    required: true\ncolumns:\n  b:\n    unique: true\n", "duplicate"),

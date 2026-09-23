@@ -1,9 +1,12 @@
 # Benchmark rules for the public UCI Adult fixture (benchmark/public/adult.csv).
 #
-# They exist only to make the four injected defect types observable; they are
+# They exist only to make the four injected defect types observable; the type
+# rule intentionally observes the same invalid-number injection rather than
+# adding a second mutation mechanism. They are
 # not claimed to be business rules for the Adult dataset:
 #   * 10 blanked `age` cells          -> required  (missing value)
 #   * 10 non-numeric `age` values     -> min       (invalid numerics fail)
+#                                      -> type      (integer)
 #   * 10 unknown `workclass` values   -> allowed   (exact, case-sensitive)
 #   * 10 appended duplicate rows      -> dataset.max_duplicate_rows
 #
@@ -15,6 +18,7 @@ dataset:
 columns:
   age:
     required: true
+    type: integer
     min: 17
   workclass:
     allowed:
