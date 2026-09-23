@@ -2,7 +2,7 @@
 
 **v0.1.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
 
-The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. The helper makes **no model calls, no network access, and no writes** to inspected sources.
+The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources.
 
 ## Repository layout
 
@@ -117,7 +117,7 @@ Exit codes: `0` = inspected / no failed rules · `1` = rule violations · `2` = 
 
 ## Rules
 
-Exactly seven column rules — `required`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and one dataset rule, `max_duplicate_rows`. Counting semantics (missing values, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
+Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and one dataset rule, `max_duplicate_rows`. Counting semantics (missing values, missing percentages, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
 
 ## Output contract
 
@@ -131,7 +131,8 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 ## Read-only boundaries
 
-- The helper never writes to the source. SQLite is opened via URI `mode=ro`; write attempts fail with `attempt to write a readonly database` (enforced by tests). All readers are verified to leave source bytes unchanged. Note: opening a WAL-mode database read-only may create SQLite's transient `-shm`/`-wal` sidecar files — the database file itself is never written.
+- Source data is permanently read-only. The helper never writes to the source. SQLite is opened via URI `mode=ro`; write attempts fail with `attempt to write a readonly database` (enforced by tests). All readers are verified to leave source bytes unchanged. Note: opening a WAL-mode database read-only may create SQLite's transient `-shm`/`-wal` sidecar files — the database file itself is never written.
+- Cleansing, repair, and data alteration are out of scope by design; findings and suggested fixes are explanations only.
 - No network access, no model calls, and no execution of data-derived strings. There is no output-file flag.
 - `row_refs` are run-local record positions (1-based; physical line numbers for text sources; scan offsets for SQLite), not permanent row identifiers.
 
@@ -139,7 +140,7 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 - Semantic or factual quality of text; freshness without an SLA; accuracy without reference data.
 - Baselines, drift, distribution changes, or outlier detection — deferred by design.
-- Repairs: the skill never modifies data; suggested fixes are explanations only.
+- Cleansing, repair, or alteration of source data — permanently out of scope by design; findings and suggested fixes are explanations only.
 - XLSX formulas are not evaluated; cached values may be missing or stale (a warning says so).
 - No aggregate score, and exit 0 alone never proves dataset quality.
 - Escaping adversarial cells as data does not make every host model immune to prompt injection.
@@ -148,7 +149,7 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pyarrow 25.0.1, pytest 9.1.1.
 
-- **Test suite** — `python -m pytest tests/ -q` passes (99 tests): every reader and rule, clean/dirty cases, missing/blank/literal-NA distinctions, Arabic/BOM, leading zeros, mixed numerics, duplicate semantics, empty data, invalid inputs and rules (including non-finite rule bounds and records wider than the header, which are rejected rather than shifted), JSON/exit-code contract, evidence limits, adversarial cell content, unchanged source bytes, WAL-mode SQLite, and SQLite read-only enforcement (write attempt fails).
+- **Test suite** — `python -m pytest tests/ -q` passes (107 tests in the current checkout): every reader and rule, clean/dirty cases, missing/blank/literal-NA distinctions, missing-percentage thresholds and empty-data handling, Arabic/BOM, leading zeros, mixed numerics, duplicate semantics, empty data, invalid inputs and rules (including non-finite rule bounds and records wider than the header, which are rejected rather than shifted), JSON/exit-code contract, evidence limits, adversarial cell content, unchanged source bytes, WAL-mode SQLite, and SQLite read-only enforcement (write attempt fails).
 - **Copied-folder test** — `skills/data-quality/` was copied to an unrelated directory, installed into a clean venv **from `requirements.txt` only**, and run from an unrelated working directory: profile+rules run produced the expected exit 1 and matching check summary; the Parquet path returned the specific `missing_dependency` error because pyarrow was absent (as designed). No repository-root dependency.
 - **Hermes Agent harness (this machine; isolated scratch `HERMES_HOME`, never a live profile)** — the bundle was copied into a scratch home's skills directory and driven with `hermes -z … --skills data-quality`: the harness preloaded the skill by name, the agent resolved and ran the installed `scripts/dq.py` itself, and reported exit 1 with the expected per-check lines (3 passed / 3 failed / 0 not_evaluated). Latest run: against the final revision after the record-width fix (`dq.py` sha256 prefix `e55118ac`); the earlier build runs produced the same report, and `hermes skills list` in that scratch home registers `data-quality` as enabled. Nothing was installed into a live profile's skills directory. Note: Hermes one-shot mode (`-z`) does not inject a skills index — pass `--skills data-quality`, or install into the host's skills directory for regular sessions.
 - **Format compatibility vs tested harnesses** — the bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`), which does not imply other hosts were exercised. Codex, Claude Code, and all other hosts are **untested** by this repository.
@@ -173,9 +174,11 @@ v0.1.0 stops at the scope described above. The following are deliberately **not*
 - **Drift / distribution-change detection** — no change detection between runs.
 - **IQR / statistical anomaly detection** — outliers are not flagged; only the rules the user supplies are checked.
 - **SQLAlchemy or any live non-SQLite database access** — PostgreSQL, MySQL, and SQL Server go through an export to a supported file first.
-- **Remediation / repair** — the skill never modifies data; findings and suggested fixes are explanations only.
+- **Remediation / repair** — the skill never modifies source data; findings and suggested fixes are explanations only.
 
-Add these only on a demonstrated need: one of cross-column/reference checks **or** one specific external database connector first, then baseline comparison once repeated comparisons are actually required, then richer Excel handling, text semantics, or cleaning into a separate output file.
+The source-data boundary is permanent: cleansing, repair, and data alteration are out of scope by design.
+
+No extension roadmap is promised for those boundaries; future work, if any, remains read-only profiling and rule checking.
 
 ## License
 

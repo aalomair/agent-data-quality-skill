@@ -282,6 +282,54 @@ def test_empty_dataset_percentages_are_null(tmp_path):
     assert payload["overall"]["status"] == "inspected"  # never "passed" on empty data
 
 
+def test_max_null_pct_uses_missing_definition_and_passes_at_threshold(tmp_path):
+    src = write(tmp_path / "null_pct.csv", "v\nkept\n  \nkept\nkept\n")
+    rules = write(tmp_path / "null_pct.yml", "columns:\n  v:\n    max_null_pct: 25\n")
+    payload, _ = run_json([src, "--rules", rules], expect=0)
+
+    c = check(payload, "max_null_pct", "v")
+    assert (c["evaluated"], c["violations"], c["status"]) == (4, 0, "passed")
+    assert c["row_refs"] == []
+    assert c["row_refs_truncated"] is False
+    assert c["details"] == {"threshold": 25, "actual_missing_percent": 25.0}
+
+
+def test_max_null_pct_fails_with_missing_row_evidence(tmp_path):
+    src = write(tmp_path / "null_pct.csv", "v\nkept\n\n \nkept\n")
+    rules = write(tmp_path / "null_pct.yml", "columns:\n  v:\n    max_null_pct: 25\n")
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    c = check(payload, "max_null_pct", "v")
+    assert (c["evaluated"], c["violations"], c["status"]) == (4, 2, "failed")
+    assert c["row_refs"] == [2, 3]
+    assert c["row_refs_truncated"] is False
+    assert c["details"] == {"threshold": 25, "actual_missing_percent": 50.0}
+
+
+def test_max_null_pct_empty_dataset_is_not_evaluated(tmp_path):
+    src = write(tmp_path / "header_only.csv", "v\n")
+    rules = write(tmp_path / "null_pct.yml", "columns:\n  v:\n    max_null_pct: 0\n")
+    payload, _ = run_json([src, "--rules", rules], expect=0)
+
+    c = check(payload, "max_null_pct", "v")
+    assert (c["evaluated"], c["violations"], c["status"]) == (0, 0, "not_evaluated")
+    assert c["row_refs"] == []
+    assert c["details"] == {"threshold": 0, "actual_missing_percent": None}
+    assert payload["overall"]["status"] == "inspected"
+    assert payload["overall"]["checks_not_evaluated"] == 1
+
+
+@pytest.mark.parametrize("value", ["-0.1", "100.1", "true", ".nan", ".inf", "'50'"])
+def test_max_null_pct_requires_a_finite_percentage(tmp_path, value):
+    src = write(tmp_path / "values.csv", "v\nx\n")
+    rules = write(
+        tmp_path / "values.yml",
+        f"columns:\n  v:\n    max_null_pct: {value}\n",
+    )
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+    assert "max_null_pct" in payload["errors"][0]["message"]
+
+
 # --------------------------------------------------------------------------
 # Duplicate semantics
 # --------------------------------------------------------------------------

@@ -10,7 +10,7 @@ metadata:
 
 # Data Quality Skill
 
-Profile a local dataset and check it against a small YAML rule set. Python (`scripts/dq.py`) does all reading, counting, and checking deterministically; you (the host agent) interpret the objective, decide which rules are justified, and write the report. The helper makes no model or network calls.
+Profile a local dataset and check it against a small YAML rule set. Python (`scripts/dq.py`) does all reading, counting, and checking deterministically; you (the host agent) interpret the objective, decide which rules are justified, and write the report. Source data is permanently read-only: the helper makes no model or network calls and never alters the inspected data.
 
 Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Format compatibility does not mean every host has been tested — README.md lists the harnesses actually exercised.
 
@@ -18,9 +18,9 @@ Portability note: this bundle follows the portable Agent Skills layout (`SKILL.m
 
 - The user asks for a data-quality profile, validation, or "is this file clean?" check on a local dataset.
 - You need deterministic counts (missing values, duplicates, rule violations) to cite in a report.
-- The user supplies or requests explicit acceptance rules: required, unique, type, min, max, allowed, regex, max_duplicate_rows.
+- The user supplies or requests explicit acceptance rules: required, max_null_pct, unique, type, min, max, allowed, regex, max_duplicate_rows.
 
-Don't use for: repairing or cleaning data, comparing editions (no baselines/drift detection), semantic or factual validation of text, or non-SQLite databases (export to a supported file first).
+Don't use for: cleansing, repairing, or altering source data (permanently out of scope by design); comparing editions (no baselines/drift detection); semantic or factual validation of text; or non-SQLite databases (export to a supported file first).
 
 ## Prerequisites
 
@@ -69,7 +69,7 @@ Rule semantics and evidence rules: `references/RULES.md`. Supported inputs, limi
 - Exit 0 never proves dataset quality: rules may be absent, or checks may be `not_evaluated` (empty data or no eligible values).
 - XLSX formulas are never executed; their cached values may be missing or stale, and the report warns when formulas are present.
 - Sources beyond the documented limits (50 MiB / 200,000 rows) are rejected, never sampled or truncated.
-- Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). Give no aggregate score. Suggested fixes are explanations only — this skill never modifies data.
+- Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). Give no aggregate score. Cleansing, repair, and alteration of source data are permanently out of scope; suggested fixes are explanations only — this skill never alters data.
 - The helper escaping adversarial cells as data does not prove every host model is immune to prompt injection.
 
 ## Verification

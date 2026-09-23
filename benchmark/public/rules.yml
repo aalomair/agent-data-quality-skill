@@ -1,10 +1,10 @@
 # Benchmark rules for the public UCI Adult fixture (benchmark/public/adult.csv).
 #
 # They exist only to make the four injected defect types observable; the type
-# rule intentionally observes the same invalid-number injection rather than
-# adding a second mutation mechanism. They are
-# not claimed to be business rules for the Adult dataset:
-#   * 10 blanked `age` cells          -> required  (missing value)
+# and max-null-percentage rules intentionally observe the same invalid-number
+# and missing-value injections rather than adding second mutation mechanisms.
+# They are not claimed to be business rules for the Adult dataset:
+#   * 10 blanked `age` cells          -> required and max_null_pct (0)
 #   * 10 non-numeric `age` values     -> min       (invalid numerics fail)
 #                                      -> type      (integer)
 #   * 10 unknown `workclass` values   -> allowed   (exact, case-sensitive)
@@ -18,6 +18,7 @@ dataset:
 columns:
   age:
     required: true
+    max_null_pct: 0
     type: integer
     min: 17
   workclass:

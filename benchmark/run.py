@@ -3,10 +3,10 @@
 
 The harness runs the shipped CLI (skills/data-quality/scripts/dq.py) on a real
 dataset, injects four defect types into a *temporary copy*, and compares the
-violations the skill reports with the defects that were injected. The type
-check intentionally observes the existing invalid-number injection; it does
-not add a second mutation mechanism. The skill is never modified and the
-datasets are never written to.
+violations the skill reports with the defects that were injected. The type and
+max-null-percentage checks intentionally observe the existing invalid-number
+and missing-value injections; they do not add second mutation mechanisms. The
+skill is never modified and the datasets are never written to.
 
 Datasets:
 
@@ -182,6 +182,7 @@ def run_public(verbose: bool) -> bool:
 
     expected = {
         "required:age": INJECT_PER_TYPE,
+        "max_null_pct:age": INJECT_PER_TYPE,
         "type:age": INJECT_PER_TYPE,
         "min:age": INJECT_PER_TYPE,
         "allowed:workclass": INJECT_PER_TYPE,
@@ -276,7 +277,11 @@ def rules_yaml(rules: dict) -> str:
         lines += ["dataset:", f"  max_duplicate_rows: {rules['max_duplicate_rows']}"]
     lines.append("columns:")
     if rules["required"]:
-        lines += [f"  {rules['required']}:", "    required: true"]
+        lines += [
+            f"  {rules['required']}:",
+            "    required: true",
+            "    max_null_pct: 0",
+        ]
     if rules["numeric"]:
         lines += [
             f"  {rules['numeric']}:",
@@ -316,6 +321,7 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
         for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):
             corrupted[position][target] = MISSING_VALUE
         expected[f"required:{rules['required']}"] = INJECT_PER_TYPE
+        expected[f"max_null_pct:{rules['required']}"] = INJECT_PER_TYPE
     if rules["numeric"]:
         target = index[rules["numeric"]]
         for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):

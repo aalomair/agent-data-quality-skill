@@ -1,6 +1,6 @@
 # Rule semantics (v0.1.0)
 
-Reference for how `scripts/dq.py` evaluates data and rules. Every count is deterministic and computed from preserved values; the helper never modifies data.
+Reference for how `scripts/dq.py` evaluates data and rules. Every count is deterministic and computed from preserved values; source data is permanently read-only, and cleansing, repair, and alteration are out of scope by design.
 
 ## Missing values
 
@@ -11,9 +11,10 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 ## Rule application
 
 - `required` evaluates **all rows**; each missing value is a violation.
+- `max_null_pct` evaluates **all rows** to calculate the column's missing percentage.
 - Every other column rule **excludes missing values** from evaluation. Combine with `required` when missing values must also fail.
-- `evaluated` = number of eligible (nonmissing) values for the rule. **No eligible values → status `not_evaluated`**, never `passed`.
-- Output order: dataset rule first, then columns in the rules file's order; within a column: required, unique, type, min, max, allowed, regex.
+- `evaluated` = number of eligible values for the rule; for `max_null_pct`, this is the total row count. **No eligible values → status `not_evaluated`**, never `passed`.
+- Output order: dataset rule first, then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
 
 ## `dataset.max_duplicate_rows`
 
@@ -26,6 +27,13 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 
 ### `required`
 Boolean. Violations are missing values; `evaluated` is the row count.
+
+### `max_null_pct`
+- The threshold must be a finite number from 0 through 100.
+- Missing values use the definition above, including native nulls and empty or whitespace-only strings. Literal `NA`, `NULL`, and `na` remain values.
+- The actual missing percentage is `missing rows / total rows * 100`, rounded to 2 decimals like the profile's `missing_percent`.
+- The check passes when the actual missing percentage is less than or equal to the threshold; otherwise it fails. `violations` counts the missing rows when the threshold is exceeded, and `row_refs` lists those missing-row positions (bounded, see Evidence).
+- `details` always includes `threshold` and `actual_missing_percent`. For an empty dataset, the actual value is `null`, `evaluated` is 0, and the status is `not_evaluated` — never `passed`.
 
 ### `unique`
 - Violations count **every nonmissing value that sits in a repeated-value group**: `[a, a, b]` → 2 violations; `[a, a, a]` → 3.
