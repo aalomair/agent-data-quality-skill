@@ -308,6 +308,22 @@ def _check_row_limit(rows: list[list[Any]]) -> None:
         )
 
 
+def _validate_column_names(columns: list[str], noun: str = "column name") -> list[str]:
+    """Reject empty or duplicate names for every tabular reader."""
+    plural = "headers" if noun == "header" else "column names"
+    seen = set()
+    for position, name in enumerate(columns, start=1):
+        if not isinstance(name, str) or name.strip() == "":
+            raise DqError("malformed_source", f"empty {noun} at column {position}")
+        if name in seen:
+            raise DqError(
+                "malformed_source",
+                f"duplicate {noun} {name!r}; {plural} must be unique",
+            )
+        seen.add(name)
+    return columns
+
+
 def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> list[str]:
     previous_field_limit = csv.field_size_limit(MAX_SOURCE_BYTES)
     try:
@@ -317,6 +333,8 @@ def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> lis
                 header = next(reader)
             except StopIteration:
                 raise DqError("malformed_source", "empty source: no header row found")
+            if any("\x00" in field for field in header):
+                raise DqError("malformed_source", "NUL character in header")
             # Records wider than the header are malformed and are rejected here.
             # The pandas parser only fails on such rows after the first data
             # record; for the first one it treats the leading field as an index
@@ -324,6 +342,11 @@ def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> lis
             # the file is already open (bounded to the row limit).
             width = len(header)
             for ordinal, record in enumerate(reader, start=1):
+                if any("\x00" in field for field in record):
+                    raise DqError(
+                        "malformed_source",
+                        f"NUL character in record {ordinal}",
+                    )
                 if len(record) > width:
                     raise DqError(
                         "malformed_source",
@@ -341,18 +364,7 @@ def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> lis
         csv.field_size_limit(previous_field_limit)
     if not header:
         raise DqError("malformed_source", "empty header row in source")
-    for position, name in enumerate(header, start=1):
-        if name.strip() == "":
-            raise DqError("malformed_source", f"empty header at column {position}")
-    seen = set()
-    for name in header:
-        if name in seen:
-            raise DqError(
-                "malformed_source",
-                f"duplicate header {name!r}; headers must be unique",
-            )
-        seen.add(name)
-    return header
+    return _validate_column_names(header, "header")
 
 
 def _read_delimited(path: Path, delimiter: str, encoding: str) -> Loaded:
@@ -413,6 +425,15 @@ def _reject_json_constant(name: str) -> None:
     raise ValueError(f"non-standard JSON constant: {name}")
 
 
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    object_value: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in object_value:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        object_value[key] = value
+    return object_value
+
+
 def _records_to_table(records: list[tuple[int, Any]], noun: str) -> tuple[list[str], list[list[Any]]]:
     columns: list[str] = []
     items: list[dict] = []
@@ -429,6 +450,7 @@ def _records_to_table(records: list[tuple[int, Any]], noun: str) -> tuple[list[s
             if key not in columns:
                 columns.append(key)
         items.append(item)
+    _validate_column_names(columns)
     rows = [
         [normalise_cell(item.get(column)) for column in columns] for item in items
     ]
@@ -438,7 +460,11 @@ def _records_to_table(records: list[tuple[int, Any]], noun: str) -> tuple[list[s
 def _read_json(path: Path, encoding: str | None, sheet: str | None, table: str | None) -> Loaded:
     text = _read_text_source(path, encoding or DEFAULT_ENCODING)
     try:
-        document = json.loads(text, parse_constant=_reject_json_constant)
+        document = json.loads(
+            text,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
+        )
     except ValueError as exc:
         raise DqError("malformed_source", f"malformed JSON: {exc}")
     if not isinstance(document, list):
@@ -462,7 +488,11 @@ def _read_jsonl(path: Path, encoding: str | None, sheet: str | None, table: str 
                 if line.strip() == "":
                     continue
                 try:
-                    item = json.loads(line, parse_constant=_reject_json_constant)
+                    item = json.loads(
+                        line,
+                        parse_constant=_reject_json_constant,
+                        object_pairs_hook=_reject_duplicate_object_keys,
+                    )
                 except ValueError as exc:
                     raise DqError(
                         "malformed_source",
@@ -615,14 +645,7 @@ def _read_xlsx(path: Path, encoding: str | None, sheet: str | None, table: str |
                     f"empty header at column {position} in worksheet {sheet_name!r}",
                 )
             columns.append(value if isinstance(value, str) else _header_text(value))
-        seen = set()
-        for name in columns:
-            if name in seen:
-                raise DqError(
-                    "malformed_source",
-                    f"duplicate header {name!r}; headers must be unique",
-                )
-            seen.add(name)
+        _validate_column_names(columns, "header")
         rows: list[list[Any]] = []
         if row_count >= 2:
             for record in values_sheet.iter_rows(
@@ -699,6 +722,7 @@ def _read_sqlite(path: Path, encoding: str | None, sheet: str | None, table: str
         try:
             cursor = connection.execute(f"SELECT * FROM {quoted} LIMIT {MAX_ROWS + 1}")
             columns = [description[0] for description in cursor.description]
+            _validate_column_names(columns)
             rows = [
                 [normalise_cell(value) for value in record] for record in cursor
             ]
@@ -757,6 +781,7 @@ def read_parquet(
                 "(no flattening)",
             )
     columns = list(table_data.column_names)
+    _validate_column_names(columns)
     column_values = [column.to_pylist() for column in table_data.columns]
     rows = [
         [normalise_cell(column_values[index][row_index]) for index in range(len(columns))]
@@ -820,7 +845,11 @@ def profile_table(loaded: Loaded) -> tuple[dict, list[dict]]:
                 "count": len(finite),
                 "min": min(finite),
                 "max": max(finite),
-                "mean": round(sum(finite) / len(finite), 6),
+                # Scale before summing so finite large floats cannot overflow
+                # merely because the ordinary total exceeds float range.
+                "mean": round(
+                    math.fsum(value / len(finite) for value in finite), 6
+                ),
             }
         strings = [value for value in present if isinstance(value, str)]
         string_length = None
@@ -884,28 +913,37 @@ def load_rules(path: Path, columns: list[str]) -> dict:
             "invalid_rules", f"unknown top-level key in rules file: {unknown_top[0]!r}"
         )
 
-    dataset_section = document.get("dataset") or {}
-    if not isinstance(dataset_section, dict):
-        raise DqError("invalid_rules", "'dataset' must be a mapping")
+    if "dataset" in document:
+        dataset_section = document["dataset"]
+        if not isinstance(dataset_section, dict):
+            raise DqError("invalid_rules", "'dataset' must be a mapping")
+    else:
+        dataset_section = {}
     unknown_dataset = [key for key in dataset_section if key not in DATASET_RULES]
     if unknown_dataset:
         raise DqError(
             "invalid_rules", f"unknown dataset rule: {unknown_dataset[0]!r}"
         )
-    max_duplicate_rows = dataset_section.get("max_duplicate_rows")
-    if max_duplicate_rows is not None and (
-        isinstance(max_duplicate_rows, bool)
-        or not isinstance(max_duplicate_rows, int)
-        or max_duplicate_rows < 0
-    ):
-        raise DqError(
-            "invalid_rules",
-            "dataset.max_duplicate_rows must be a non-negative integer",
-        )
+    if "max_duplicate_rows" in dataset_section:
+        max_duplicate_rows = dataset_section["max_duplicate_rows"]
+        if (
+            isinstance(max_duplicate_rows, bool)
+            or not isinstance(max_duplicate_rows, int)
+            or max_duplicate_rows < 0
+        ):
+            raise DqError(
+                "invalid_rules",
+                "dataset.max_duplicate_rows must be a non-negative integer",
+            )
+    else:
+        max_duplicate_rows = None
 
-    columns_section = document.get("columns") or {}
-    if not isinstance(columns_section, dict):
-        raise DqError("invalid_rules", "'columns' must be a mapping")
+    if "columns" in document:
+        columns_section = document["columns"]
+        if not isinstance(columns_section, dict):
+            raise DqError("invalid_rules", "'columns' must be a mapping")
+    else:
+        columns_section = {}
     normalised_columns: list[tuple[str, dict]] = []
     for name, rule_values in columns_section.items():
         if name not in columns:
@@ -933,7 +971,9 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                         "invalid_rules",
                         f"invalid rule value for column {name!r}: {rule!r} must be true or false",
                     )
-                compiled[rule] = value
+                # False is an explicit disabled rule, not a failing check.
+                if value:
+                    compiled[rule] = value
             elif rule in ("min", "max"):
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     raise DqError(

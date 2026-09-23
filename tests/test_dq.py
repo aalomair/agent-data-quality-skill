@@ -1422,3 +1422,180 @@ def test_sqlite_wal_database_reads_and_database_file_unchanged(tmp_path):
     # standard behavior and documented in references/RULES.md.
     extras = {p.name for p in tmp_path.iterdir() if p.name.startswith("wal.sqlite")}
     assert extras <= {"wal.sqlite", "wal.sqlite-shm", "wal.sqlite-wal"}
+
+
+# ----- v0.2.1 correctness regressions -----
+
+
+def test_false_required_and_unique_rules_are_disabled(tmp_path):
+    src = write(tmp_path / "disabled.csv", "required_col,unique_col\n,dup\nvalue,dup\n")
+    rules = write(
+        tmp_path / "disabled.yml",
+        """\
+columns:
+  required_col:
+    required: false
+  unique_col:
+    unique: false
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    assert payload["checks"] == []
+    assert payload["dimensions"] == {
+        "completeness": {"score": None, "evaluated": 0, "violations": 0},
+        "uniqueness": {"score": None, "evaluated": 0, "violations": 0},
+        "validity": {"score": None, "evaluated": 0, "violations": 0},
+    }
+
+
+@pytest.mark.parametrize(
+    "name,content",
+    [
+        ("nul-header.csv", "a\x00,b\n1,2\n"),
+        ("nul-record.csv", "a,b\n1\x00,2\n"),
+        ("nul-record.tsv", "a\tb\n1\t2\x00\n"),
+    ],
+)
+def test_nul_in_delimited_sources_is_rejected_before_parsing(tmp_path, name, content):
+    src = write(tmp_path / name, content)
+
+    payload, _ = run_json([src], expect=2)
+
+    assert payload["errors"][0]["code"] == "malformed_source"
+    assert "nul" in payload["errors"][0]["message"].lower()
+    assert payload["profile"] is None
+
+
+@pytest.mark.parametrize(
+    "suffix,content",
+    [
+        (".json", "[{\"\": 1}]"),
+        (".jsonl", "{\"\": 1}\n"),
+    ],
+)
+def test_json_readers_reject_empty_column_names(tmp_path, suffix, content):
+    src = write(tmp_path / f"empty{suffix}", content)
+
+    payload, _ = run_json([src], expect=2)
+
+    assert payload["errors"][0]["code"] == "malformed_source"
+    assert "empty" in payload["errors"][0]["message"].lower()
+    assert payload["profile"] is None
+
+
+@pytest.mark.parametrize(
+    "suffix,content",
+    [
+        (".json", "[{\"a\": 1, \"a\": 2}]"),
+        (".jsonl", "{\"a\": 1, \"a\": 2}\n"),
+    ],
+)
+def test_json_readers_reject_duplicate_object_keys(tmp_path, suffix, content):
+    src = write(tmp_path / f"duplicate{suffix}", content)
+
+    payload, _ = run_json([src], expect=2)
+
+    assert payload["errors"][0]["code"] == "malformed_source"
+    assert "duplicate" in payload["errors"][0]["message"].lower()
+    assert payload["profile"] is None
+
+
+def test_parquet_rejects_duplicate_and_empty_column_names(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
+    cases = [
+        ("duplicate.parquet", ["a", "a"], "duplicate"),
+        ("empty.parquet", [""], "empty"),
+    ]
+    for filename, names, needle in cases:
+        table = pa.Table.from_arrays(
+            [pa.array([1]) for _ in names], names=names
+        )
+        src = tmp_path / filename
+        pq.write_table(table, src)
+
+        payload, _ = run_json([src], expect=2)
+
+        assert payload["errors"][0]["code"] == "malformed_source"
+        assert needle in payload["errors"][0]["message"].lower()
+        assert payload["profile"] is None
+
+
+def test_sqlite_rejects_empty_column_name(tmp_path):
+    db = tmp_path / "empty-column.sqlite"
+    connection = sqlite3.connect(db)
+    try:
+        connection.execute('CREATE TABLE items ("" TEXT)')
+        connection.execute('INSERT INTO items VALUES (\'x\')')
+        connection.commit()
+    finally:
+        connection.close()
+
+    payload, _ = run_json([db, "--table", "items"], expect=2)
+
+    assert payload["errors"][0]["code"] == "malformed_source"
+    assert "empty" in payload["errors"][0]["message"].lower()
+    assert payload["profile"] is None
+
+
+@pytest.mark.parametrize(
+    "section,value",
+    [
+        ("dataset", "null"),
+        ("dataset", "false"),
+        ("dataset", "[]"),
+        ("dataset", "1"),
+        ("columns", "null"),
+        ("columns", "false"),
+        ("columns", "[]"),
+        ("columns", "1"),
+    ],
+)
+def test_explicit_non_mapping_rule_sections_are_errors(tmp_path, section, value):
+    src = write(tmp_path / "rules-section.csv", "a\n1\n")
+    rules = write(tmp_path / "rules-section.yml", f"{section}: {value}\n")
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["errors"][0]["code"] == "invalid_rules"
+    assert section in payload["errors"][0]["message"]
+    assert payload["checks"] == []
+
+
+def test_omitted_rule_sections_default_to_empty(tmp_path):
+    src = write(tmp_path / "empty-rules.csv", "a\n1\n")
+    rules = write(tmp_path / "empty-rules.yml", "{}\n")
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    assert payload["checks"] == []
+    assert payload["overall"]["status"] == "inspected"
+
+
+def test_null_dataset_duplicate_limit_is_an_error(tmp_path):
+    src = write(tmp_path / "null-limit.csv", "a\n1\n")
+    rules = write(
+        tmp_path / "null-limit.yml",
+        "dataset:\n  max_duplicate_rows: null\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["errors"][0]["code"] == "invalid_rules"
+    assert "max_duplicate_rows" in payload["errors"][0]["message"]
+
+
+def test_numeric_profile_mean_is_overflow_safe(tmp_path):
+    src = write(tmp_path / "large.csv", "value\n1e308\n1e308\n")
+
+    payload, _ = run_json([src])
+
+    assert col(payload, "value")["numeric"] == {
+        "count": 2,
+        "min": 1e308,
+        "max": 1e308,
+        "mean": 1e308,
+    }

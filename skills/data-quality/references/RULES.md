@@ -35,7 +35,7 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 ## Column rules
 
 ### `required`
-Boolean. Violations are missing values; `evaluated` is the row count.
+Boolean. `true` evaluates all rows and reports missing values as violations; `false` disables this check entirely. Violations are missing values; `evaluated` is the row count.
 
 ### `max_null_pct`
 - The threshold must be a finite number from 0 through 100.
@@ -45,6 +45,7 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 - `details` always includes `threshold` and `actual_missing_percent`. For an empty dataset, the actual value is `null`, `evaluated` is 0, and the status is `not_evaluated` — never `passed`.
 
 ### `unique`
+- Boolean. `true` evaluates nonmissing values for repeated groups; `false` disables this check entirely.
 - Violations count **every nonmissing value that sits in a repeated-value group**: `[a, a, b]` → 2 violations; `[a, a, a]` → 3.
 - Value equality follows the same scalar rules as duplicate-row detection.
 
