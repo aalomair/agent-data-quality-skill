@@ -1,6 +1,6 @@
 # agent-data-quality-skill
 
-**v0.1.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
+**v0.2.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
 
 The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources.
 
@@ -127,6 +127,14 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 For the default concise human-facing summary, follow `skills/data-quality/SKILL.md`; raw JSON is machine evidence and should be shown only when requested.
 
+## v0.2.0 highlights
+
+- Deterministic `type` and `max_null_pct` rules.
+- Fixed completeness, uniqueness, and validity classification.
+- Deterministic per-dimension scores with no global score.
+- Explicit LLM workflow and human-facing report contract.
+- Permanent read-only source-data boundary.
+
 ## Limits
 
 - Sources above **50 MiB** or **200,000 rows** are rejected (exit 2) — never sampled, truncated, or reported as if complete. Reads are bounded per format where possible; there is no streaming framework and no promised hard memory ceiling.
@@ -149,15 +157,16 @@ For the default concise human-facing summary, follow `skills/data-quality/SKILL.
 - No overall or global DQ score; exit 0 alone never proves dataset quality.
 - Escaping adversarial cells as data does not make every host model immune to prompt injection.
 
-## Verification status (as of 2026-09-20)
+## Verification status (as of 2026-09-23)
 
-Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pyarrow 25.0.1, pytest 9.1.1.
+Environment: Linux, Python 3.11.15, pandas 3.0.5, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1; optional pyarrow was unavailable locally (3 tests skipped).
 
-- **Local Part 2 checkpoint run (`686af68`)** — **107 passed, 3 skipped**.
-- **GitHub Actions on commit `686af68`** — **110 passed**.
-- **Copied-folder test** — `skills/data-quality/` was copied to an unrelated directory, installed into a clean venv **from `requirements.txt` only**, and run from an unrelated working directory: profile+rules run produced the expected exit 1 and matching check summary; the Parquet path returned the specific `missing_dependency` error because pyarrow was absent (as designed). No repository-root dependency.
-- **Hermes Agent harness (this machine; isolated scratch `HERMES_HOME`, never a live profile)** — the bundle was copied into a scratch home's skills directory and driven with `hermes -z … --skills data-quality`: the harness preloaded the skill by name, the agent resolved and ran the installed `scripts/dq.py` itself, and reported exit 1 with the expected per-check lines (3 passed / 3 failed / 0 not_evaluated). Latest run: against the final revision after the record-width fix (`dq.py` sha256 prefix `e55118ac`); the earlier build runs produced the same report, and `hermes skills list` in that scratch home registers `data-quality` as enabled. Nothing was installed into a live profile's skills directory. Note: Hermes one-shot mode (`-z`) does not inject a skills index — pass `--skills data-quality`, or install into the host's skills directory for regular sessions.
-- **Format compatibility vs tested harnesses** — the bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`), which does not imply other hosts were exercised. Codex, Claude Code, and all other hosts are **untested** by this repository.
+- **Local release-candidate run** — **113 passed, 3 skipped**.
+- **GitHub Actions on commit `d08feb2`** — **116 passed**.
+- **UCI Adult benchmark** — **60/60**, 0 unexpected, source unchanged.
+- **ERPNext benchmark** — **60/60**, 0 unexpected, source unchanged.
+- **Healthcare messy/clean pair** — profile → inferred candidate rules → deterministic checks/scores → human-report validation passed; external files were used transiently and are not committed.
+- **FEBRL boundary validation** — exact-duplicate boundary passed; modified/linked records were not reported as exact duplicate rows; external files were used transiently and are not committed.
 
 ## Development
 

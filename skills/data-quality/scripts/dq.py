@@ -40,7 +40,7 @@ import pandas as pd
 import yaml
 from pandas.errors import EmptyDataError, ParserError
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 SCHEMA_VERSION = "1.0"
 
 # Conservative limits; oversized sources are rejected, never truncated.

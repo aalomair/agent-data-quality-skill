@@ -1,4 +1,4 @@
-# Rule semantics (v0.1.0)
+# Rule semantics (v0.2.0)
 
 Reference for how `scripts/dq.py` evaluates data and rules. Every count is deterministic and computed from preserved values; source data is permanently read-only, and cleansing, repair, and alteration are out of scope by design.
 
