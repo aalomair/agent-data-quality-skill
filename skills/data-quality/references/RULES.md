@@ -31,8 +31,8 @@ Boolean. Violations are missing values; `evaluated` is the row count.
 ### `max_null_pct`
 - The threshold must be a finite number from 0 through 100.
 - Missing values use the definition above, including native nulls and empty or whitespace-only strings. Literal `NA`, `NULL`, and `na` remain values.
-- The actual missing percentage is `missing rows / total rows * 100`, rounded to 2 decimals like the profile's `missing_percent`.
-- The check passes when the actual missing percentage is less than or equal to the threshold; otherwise it fails. `violations` counts the missing rows when the threshold is exceeded, and `row_refs` lists those missing-row positions (bounded, see Evidence).
+- The raw missing percentage is `missing rows / total rows * 100`; pass/fail compares this unrounded value with the threshold. The reported `actual_missing_percent` is rounded to 2 decimals like the profile's `missing_percent`.
+- The check passes when the raw missing percentage is less than or equal to the threshold; otherwise it fails. `violations` counts the missing rows when the threshold is exceeded, and `row_refs` lists those missing-row positions (bounded, see Evidence).
 - `details` always includes `threshold` and `actual_missing_percent`. For an empty dataset, the actual value is `null`, `evaluated` is 0, and the status is `not_evaluated` — never `passed`.
 
 ### `unique`

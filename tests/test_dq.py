@@ -306,6 +306,23 @@ def test_max_null_pct_fails_with_missing_row_evidence(tmp_path):
     assert c["details"] == {"threshold": 25, "actual_missing_percent": 50.0}
 
 
+def test_max_null_pct_compares_raw_percentage_before_rounding(tmp_path):
+    src = write(
+        tmp_path / "third.csv.json",
+        json.dumps([{"v": None}, {"v": "kept"}, {"v": "kept"}]),
+    )
+    rules = write(
+        tmp_path / "null_pct.yml",
+        "columns:\n  v:\n    max_null_pct: 33.33\n",
+    )
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    c = check(payload, "max_null_pct", "v")
+    assert (c["evaluated"], c["violations"], c["status"]) == (3, 1, "failed")
+    assert c["row_refs"] == [1]
+    assert c["details"] == {"threshold": 33.33, "actual_missing_percent": 33.33}
+
+
 def test_max_null_pct_empty_dataset_is_not_evaluated(tmp_path):
     src = write(tmp_path / "header_only.csv", "v\n")
     rules = write(tmp_path / "null_pct.yml", "columns:\n  v:\n    max_null_pct: 0\n")

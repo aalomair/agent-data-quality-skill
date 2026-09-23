@@ -1127,13 +1127,15 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
                 for position, value in enumerate(values, start=1)
                 if is_missing(value)
             ]
+            raw_missing_percent = (
+                None if total == 0 else len(missing_positions) / total * 100
+            )
             actual_missing_percent = (
-                None if total == 0 else round(len(missing_positions) / total * 100, 2)
+                None if raw_missing_percent is None else round(raw_missing_percent, 2)
             )
             violating = (
                 missing_positions
-                if actual_missing_percent is not None
-                and actual_missing_percent > threshold
+                if raw_missing_percent is not None and raw_missing_percent > threshold
                 else []
             )
             checks.append(
