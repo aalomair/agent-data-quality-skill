@@ -125,6 +125,8 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 `dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. These scores measure rule applications, not unique bad rows or cells; one value may contribute to multiple checks when multiple rules apply. There is no overall or global DQ score.
 
+For the default concise human-facing summary, follow `skills/data-quality/SKILL.md`; raw JSON is machine evidence and should be shown only when requested.
+
 ## Limits
 
 - Sources above **50 MiB** or **200,000 rows** are rejected (exit 2) — never sampled, truncated, or reported as if complete. Reads are bounded per format where possible; there is no streaming framework and no promised hard memory ceiling.

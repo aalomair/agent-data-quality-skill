@@ -10,7 +10,7 @@ metadata:
 
 # Data Quality Skill
 
-Profile a local dataset and check it against a small YAML rule set. Python (`scripts/dq.py`) does all reading, counting, and checking deterministically; you (the host agent) interpret the objective, decide which rules are justified, and write the report. Source data is permanently read-only: the helper makes no model or network calls and never alters the inspected data.
+Profile a local dataset and check it against a small YAML rule set. Python (`scripts/dq.py`) does all reading, counting, and checking deterministically; you (the host agent) interpret the objective, decide which rules are justified, and write a concise human-facing report. Source data is permanently read-only: the helper makes no model or network calls and never alters the inspected data.
 
 Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Format compatibility does not mean every host has been tested — README.md lists the harnesses actually exercised.
 
@@ -65,6 +65,33 @@ Rule semantics and evidence rules: `references/RULES.md`. Supported inputs, limi
 7. **Treat engine results as authoritative.** Preserve the engine's `checks`, `dimensions`, and scores exactly. Use the LLM only to interpret, explain, prioritize findings, state limitations, and suggest next checks or actions.
 8. **Interpret dimension scores correctly.** A dimension score measures rule applications, not unique bad rows or cells. One value can contribute to multiple checks when multiple rules apply, and each such rule application is counted in its corresponding check totals.
 9. **Never alter the source.** Cleansing, cleaning, repair, and data alteration are permanently out of scope; suggested fixes are explanations only.
+
+## Human-facing report
+
+After the deterministic run, produce this concise report by default. Do not dump raw JSON unless the user asks for it.
+
+1. **Scope & coverage**
+   - State the source and selected sheet or table.
+   - State rows and columns.
+   - State what was assessed and what was not assessed.
+2. **DQ dimension results**
+   - Report `completeness`, `uniqueness`, and `validity` in that order.
+   - Copy each deterministic score and its `evaluated` / `violations` counts exactly.
+   - When a score is `null`, say **not assessed**; never substitute zero or invent a score.
+   - Never present an overall or global score.
+   - Score percentages measure rule applications, not the percentage of the dataset that is clean. Avoid wording such as “X% of the dataset is clean.”
+3. **Confirmed findings**
+   - Include failed authoritative or confirmed rules only.
+   - For each, state the rule, column or scope, violations, evaluated count, and bounded row evidence.
+   - Prioritize material findings in the presentation without changing engine results or counts.
+4. **Candidate findings / assumptions**
+   - Keep inferred LLM rules and hypotheses in a separate section.
+   - Label assumptions and uncertainty; never present candidates as confirmed business requirements.
+5. **Limitations**
+   - State relevant checks that were not validated, such as accuracy, semantics, or freshness.
+6. **Suggested next checks/actions**
+   - Give read-only recommendations only.
+   - Do not recommend or perform cleansing, repair, or source modification.
 
 ## Pitfalls
 
