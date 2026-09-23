@@ -246,6 +246,54 @@ def test_rules_fail_with_expected_counts_and_refs(basic_csv, basic_rules):
     assert payload["selection"]["rules"]["path"].endswith("rules.yml")
 
 
+def test_every_rule_check_has_its_deterministic_dimension(tmp_path):
+    src = write(
+        tmp_path / "dimensions.csv",
+        "required_col,null_col,unique_col,type_col,min_col,max_col,allowed_col,regex_col\n"
+        "ok,ok,same,ok,1,1,ok,ok\n"
+        "ok,ok,same,ok,1,1,ok,ok\n",
+    )
+    rules = write(
+        tmp_path / "dimensions.yml",
+        """\
+dataset:
+  max_duplicate_rows: 0
+columns:
+  required_col:
+    required: true
+  null_col:
+    max_null_pct: 0
+  unique_col:
+    unique: true
+  type_col:
+    type: string
+  min_col:
+    min: 0
+  max_col:
+    max: 10
+  allowed_col:
+    allowed: [ok]
+  regex_col:
+    regex: '^ok$'
+""",
+    )
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    expected = {
+        "max_duplicate_rows": "uniqueness",
+        "required": "completeness",
+        "max_null_pct": "completeness",
+        "unique": "uniqueness",
+        "type": "validity",
+        "min": "validity",
+        "max": "validity",
+        "allowed": "validity",
+        "regex": "validity",
+    }
+    assert {item["rule"]: item["dimension"] for item in payload["checks"]} == expected
+    assert check(payload, "max_duplicate_rows")["scope"] == "dataset"
+
+
 def test_rules_all_pass_exit_zero(tmp_path):
     src = write(tmp_path / "pass.csv", "a,b\n1,x\n2,y\n")
     rules = write(tmp_path / "pass.yml", "columns:\n  a:\n    required: true\n    unique: true\n")

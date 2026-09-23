@@ -92,11 +92,11 @@ python skills/data-quality/scripts/dq.py customers.csv --rules rules.yml
 ```
 
 ```json
-{"rule":"required","scope":"column","column":"name","evaluated":4,"violations":1,
+{"rule":"required","dimension":"completeness","scope":"column","column":"name","evaluated":4,"violations":1,
  "status":"failed","row_refs":[2],"row_refs_truncated":false}
-{"rule":"min","scope":"column","column":"age","evaluated":3,"violations":1,
+{"rule":"min","dimension":"validity","scope":"column","column":"age","evaluated":3,"violations":1,
  "status":"failed","row_refs":[3],"row_refs_truncated":false,"details":{"bound":0}}
-{"rule":"max","scope":"column","column":"age","evaluated":3,"violations":1,
+{"rule":"max","dimension":"validity","scope":"column","column":"age","evaluated":3,"violations":1,
  "status":"failed","row_refs":[3],"row_refs_truncated":false,"details":{"bound":120}}
 ```
 overall: `{"status":"failed","exit_code":1,"rules_applied":true,"checks_passed":3,"checks_failed":3,"checks_not_evaluated":0}`
@@ -121,7 +121,7 @@ Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `mi
 
 ## Output contract
 
-One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `warnings`, `errors`, `overall`. Every check carries its rule, scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters each) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
+One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters each) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
 
 ## Limits
 
@@ -165,7 +165,7 @@ python -m pytest tests/ -q
 
 If `python -m venv` produces an environment without pip (some distro builds omit `ensurepip`), create it with `uv venv` and install with `uv pip install` — the dependency set is identical.
 
-CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14 — it has passed on GitHub Actions for every push of this repository so far (99 passed per run: push run 35498139984, tag run 35498228065), and the same dependency set and test command were reproduced locally in a fresh venv.
+CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14; the latest recorded GitHub Actions result is listed above. The same dependency set and test command were reproduced locally in a fresh venv.
 
 ## Roadmap (deferred by design)
 

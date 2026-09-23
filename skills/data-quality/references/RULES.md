@@ -15,6 +15,7 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - Every other column rule **excludes missing values** from evaluation. Combine with `required` when missing values must also fail.
 - `evaluated` = number of eligible values for the rule; for `max_null_pct`, this is the total row count. **No eligible values → status `not_evaluated`**, never `passed`.
 - Output order: dataset rule first, then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
+- Each check carries a fixed dimension: `required` and `max_null_pct` are `completeness`; `unique` and `max_duplicate_rows` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
 
 ## `dataset.max_duplicate_rows`
 

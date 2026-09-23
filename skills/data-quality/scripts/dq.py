@@ -63,6 +63,17 @@ RULE_ORDER = (
 )
 COLUMN_RULES = frozenset(RULE_ORDER)
 DATASET_RULES = frozenset({"max_duplicate_rows"})
+RULE_DIMENSIONS = {
+    "required": "completeness",
+    "max_null_pct": "completeness",
+    "unique": "uniqueness",
+    "max_duplicate_rows": "uniqueness",
+    "type": "validity",
+    "min": "validity",
+    "max": "validity",
+    "allowed": "validity",
+    "regex": "validity",
+}
 TYPE_RULE_VALUES = frozenset({"integer", "number", "string", "boolean"})
 
 TEXT_FORMATS = frozenset({"csv", "tsv", "json", "jsonl", "text"})
@@ -1038,6 +1049,7 @@ def _column_check(
 ) -> dict:
     check = {
         "rule": rule,
+        "dimension": RULE_DIMENSIONS[rule],
         "scope": "column",
         "column": column,
         "evaluated": evaluated,
@@ -1082,6 +1094,7 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
         checks.append(
             {
                 "rule": "max_duplicate_rows",
+                "dimension": RULE_DIMENSIONS["max_duplicate_rows"],
                 "scope": "dataset",
                 "column": None,
                 "evaluated": total,

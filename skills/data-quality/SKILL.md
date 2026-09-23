@@ -75,5 +75,5 @@ Rule semantics and evidence rules: `references/RULES.md`. Supported inputs, limi
 ## Verification
 
 - The helper printed valid JSON on stdout and the exit code matched the report's `overall.exit_code`.
-- Every executed check carries rule, scope/column, evaluated count, violation count, and bounded `row_refs`.
+- Every executed check carries rule, fixed dimension, scope/column, evaluated count, violation count, and bounded `row_refs`.
 - Source bytes are unchanged after the run (SQLite is opened with `mode=ro`; a write attempt fails).
