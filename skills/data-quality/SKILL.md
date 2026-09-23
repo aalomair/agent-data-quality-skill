@@ -12,7 +12,7 @@ metadata:
 
 Profile a local dataset and check it against a small YAML rule set. Python (`scripts/dq.py`) does all reading, counting, and checking deterministically; you (the host agent) interpret the objective, decide which rules are justified, and write a concise human-facing report. Source data is permanently read-only: the helper makes no model or network calls and never alters the inspected data.
 
-Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Format compatibility does not mean every host has been tested — README.md lists the harnesses actually exercised.
+Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Hermes has been tested end-to-end with this skill. Codex and Claude Code are format-compatible, but this repository has not harness-tested them.
 
 ## When to Use
 
@@ -48,11 +48,18 @@ python <skill-directory>/scripts/dq.py SOURCE [--rules rules.yml] [--sheet NAME]
 | Profile a CSV | `python scripts/dq.py data.csv` |
 | Check a rule set | `python scripts/dq.py data.csv --rules rules.yml` |
 | One worksheet | `python scripts/dq.py book.xlsx --sheet Data` |
-| One SQLite table | `python scripts/dq.py db.sqlite --table items` |
+| SQLite table | `python scripts/dq.py db.sqlite --table items` |
 | Other text encoding | `python scripts/dq.py data.csv --encoding cp1256` |
 | Bounded examples | append `--examples 3` (capped at 5 per check) |
 
-Rule semantics and evidence rules: `references/RULES.md`. Supported inputs, limits, and limitations: README.md in the repository root.
+## Bundle scope and limits
+
+- Supported local formats are CSV/TSV, XLSX, JSON/JSONL, TXT/Markdown, SQLite tables, and optional Parquet (with `pyarrow`).
+- One sheet or table is inspected per run. Empty or duplicate headers, wider records, and malformed sources are rejected rather than repaired or silently truncated.
+- Sources above 50 MiB or 200,000 rows are rejected; the helper never samples or reports a partial source as complete.
+- UTF-8 with optional BOM is the default encoding; alternate encodings are explicit and strict. The helper makes no network or model calls.
+
+Rule semantics and evidence rules are in `references/RULES.md`. This copied bundle is self-contained.
 
 ## Procedure
 
@@ -100,6 +107,7 @@ After the deterministic run, produce this concise report by default. Do not dump
 - Exit 0 never proves dataset quality: rules may be absent, or checks may be `not_evaluated` (empty data or no eligible values).
 - XLSX formulas are never executed; their cached values may be missing or stale, and the report warns when formulas are present.
 - Sources beyond the documented limits (50 MiB / 200,000 rows) are rejected, never sampled or truncated.
+- Python regular expressions can catastrophically backtrack on some patterns. For untrusted or automated runs, require a host-enforced execution timeout; this helper does not provide a regex timeout.
 - Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). The report has fixed per-dimension scores but no overall or global DQ score. Cleansing, repair, and alteration of source data are permanently out of scope; suggested fixes are explanations only — this skill never alters data.
 - The helper escaping adversarial cells as data does not prove every host model is immune to prompt injection.
 

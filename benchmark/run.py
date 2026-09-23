@@ -19,7 +19,9 @@ Datasets:
                     is skipped when no suitable column exists.
 
 The corrupted copy and any generated rules live in a temporary directory that is
-removed on exit, so nothing is written next to the sources.
+removed on exit, so nothing is written next to the sources. ERPNext expected
+counts use the positions actually injected; duplicate expectations use the final
+exact-duplicate extras relative to the source's original duplicate allowance.
 
 Run with an interpreter that has the skill's dependencies:
 
@@ -84,6 +86,11 @@ def parse_number(value: str) -> float | None:
     return float(text) if NUMBER_RE.match(text) else None
 
 
+def duplicate_extras(rows: list[list[str]]) -> int:
+    """Return exact duplicate rows beyond the first occurrence of each key."""
+    return len(rows) - len({tuple(row) for row in rows})
+
+
 def pick_positions(row_count: int, count: int, taken: set[int]) -> list[int]:
     """Deterministic, spread-out row positions that are not already used."""
     step = max(1, row_count // (count * 4))
@@ -114,6 +121,47 @@ def run_skill(source: Path, rules: Path | None = None) -> tuple[int, dict | None
     except Exception:  # noqa: BLE001 - reported as a failed check below
         payload = None
     return proc.returncode, payload, proc.stderr.strip()
+
+
+def validate_cli_result(
+    code: int,
+    payload: dict | None,
+    stderr: str,
+    *,
+    expected_exit_code: int,
+    expected_status: str,
+) -> list[str]:
+    """Validate the CLI result before comparing benchmark check counts."""
+    problems: list[str] = []
+    if payload is None:
+        detail = f": {stderr}" if stderr else ""
+        return [f"no JSON report on stdout (CLI exit code {code}{detail})"]
+    if not isinstance(payload, dict):
+        return [f"JSON report is not an object (CLI exit code {code})"]
+
+    if code != expected_exit_code:
+        problems.append(
+            f"CLI exit code {code}, expected {expected_exit_code}"
+        )
+    overall = payload.get("overall")
+    if not isinstance(overall, dict):
+        problems.append("payload overall is missing or is not an object")
+    else:
+        if overall.get("exit_code") != code:
+            problems.append(
+                "payload overall.exit_code "
+                f"{overall.get('exit_code')!r} does not match CLI exit code {code}"
+            )
+        if overall.get("status") != expected_status:
+            problems.append(
+                f"payload status {overall.get('status')!r}, "
+                f"expected {expected_status!r}"
+            )
+    if payload.get("errors") != []:
+        problems.append(f"payload errors are not empty: {payload.get('errors')!r}")
+    if not isinstance(payload.get("checks"), list):
+        problems.append("payload checks is missing or is not a list")
+    return problems
 
 
 def detected_violations(payload: dict) -> dict[str, int]:
@@ -196,11 +244,16 @@ def run_public(verbose: bool) -> bool:
 
     unchanged = sha256(source) == before and \
         sorted(p.name for p in source.parent.iterdir()) == listing
-    problems = ["no JSON report on stdout"] if payload is None else []
-    if payload is not None and payload["overall"]["status"] not in {"failed", "passed"}:
-        problems.append(f"unexpected report status {payload['overall']['status']!r}: {stderr}")
+    problems = validate_cli_result(
+        code,
+        payload,
+        stderr,
+        expected_exit_code=1,
+        expected_status="failed",
+    )
     injected = observed = unexpected = 0
-    if payload is not None:
+    if payload is not None and isinstance(payload, dict) \
+            and isinstance(payload.get("checks"), list):
         injected, observed, unexpected, problems_checks = compare(expected, payload)
         problems += problems_checks
     report("UCI Adult", None, injected, observed, unexpected, unchanged)
@@ -267,7 +320,7 @@ def derive_rules(header: list[str], rows: list[list[str]]
     if rules["category"] is None:
         skipped.append("invalid categorical values (no low-cardinality text column)")
 
-    notes["duplicate_allowance"] = len(rows) - len({tuple(row) for row in rows})
+    notes["duplicate_allowance"] = duplicate_extras(rows)
     return rules, notes, skipped
 
 
@@ -299,15 +352,21 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
     before, listing = sha256(path), sorted(p.name for p in path.parent.iterdir())
 
     profile_code, profile_payload, profile_err = run_skill(path)
-    if profile_payload is None:
-        print("ERPNext")
-        print(f"Rows: {len(rows):,}")
-        print("Injected: 0")
-        print("Detected: 0")
-        print("Unexpected: 0")
-        print("Source unchanged: FAIL")
-        print(f"error: the skill produced no JSON report (exit {profile_code}): {profile_err}",
-              file=sys.stderr)
+    profile_problems = validate_cli_result(
+        profile_code,
+        profile_payload,
+        profile_err,
+        expected_exit_code=0,
+        expected_status="inspected",
+    )
+    if profile_problems:
+        unchanged = sha256(path) == before and \
+            sorted(p.name for p in path.parent.iterdir()) == listing
+        report("ERPNext", len(rows), 0, 0, 0, unchanged)
+        for problem in profile_problems:
+            print(f"  problem: profile {problem}", file=sys.stderr)
+        if not unchanged:
+            print("  problem: the source dataset changed", file=sys.stderr)
         return False
 
     rules, notes, skipped = derive_rules(header, rows)
@@ -318,26 +377,32 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
 
     if rules["required"]:
         target = index[rules["required"]]
-        for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):
+        required_positions = pick_positions(len(rows), INJECT_PER_TYPE, taken)
+        for position in required_positions:
             corrupted[position][target] = MISSING_VALUE
-        expected[f"required:{rules['required']}"] = INJECT_PER_TYPE
-        expected[f"max_null_pct:{rules['required']}"] = INJECT_PER_TYPE
+        expected[f"required:{rules['required']}"] = len(required_positions)
+        expected[f"max_null_pct:{rules['required']}"] = len(required_positions)
     if rules["numeric"]:
         target = index[rules["numeric"]]
-        for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):
+        numeric_positions = pick_positions(len(rows), INJECT_PER_TYPE, taken)
+        for position in numeric_positions:
             corrupted[position][target] = INVALID_NUMBER
-        expected[f"min:{rules['numeric']}"] = INJECT_PER_TYPE
-        expected[f"type:{rules['numeric']}"] = INJECT_PER_TYPE
+        expected[f"min:{rules['numeric']}"] = len(numeric_positions)
+        expected[f"type:{rules['numeric']}"] = len(numeric_positions)
     if rules["category"]:
         target = index[rules["category"]]
-        for position in pick_positions(len(rows), INJECT_PER_TYPE, taken):
+        category_positions = pick_positions(len(rows), INJECT_PER_TYPE, taken)
+        for position in category_positions:
             corrupted[position][target] = INVALID_CATEGORY
-        expected[f"allowed:{rules['category']}"] = INJECT_PER_TYPE
+        expected[f"allowed:{rules['category']}"] = len(category_positions)
 
+    duplicate_allowance = duplicate_extras(rows)
     copied = pick_positions(len(rows), INJECT_PER_TYPE, taken)
     corrupted += [list(rows[position]) for position in copied]
-    rules["max_duplicate_rows"] = notes["duplicate_allowance"]
-    expected["max_duplicate_rows:dataset"] = INJECT_PER_TYPE
+    rules["max_duplicate_rows"] = duplicate_allowance
+    expected["max_duplicate_rows:dataset"] = max(
+        0, duplicate_extras(corrupted) - duplicate_allowance
+    )
 
     with tempfile.TemporaryDirectory(prefix="dq-bench-erpnext-") as tmp:
         corrupted_path = Path(tmp) / "erpnext-corrupted.csv"
@@ -348,10 +413,23 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
 
     unchanged = sha256(path) == before and \
         sorted(p.name for p in path.parent.iterdir()) == listing
-    problems = ["no JSON report on stdout"] if payload is None else []
-    injected = observed = unexpected = 0
-    if payload is not None:
-        injected, observed, unexpected, problems = compare(expected, payload)
+    injected = sum(expected.values())
+    expected_exit_code = 1 if injected else 0
+    expected_status = "failed" if injected else (
+        "passed" if rows else "inspected"
+    )
+    problems = validate_cli_result(
+        code,
+        payload,
+        stderr,
+        expected_exit_code=expected_exit_code,
+        expected_status=expected_status,
+    )
+    observed = unexpected = 0
+    if payload is not None and isinstance(payload, dict) \
+            and isinstance(payload.get("checks"), list):
+        _, observed, unexpected, problems_checks = compare(expected, payload)
+        problems += problems_checks
 
     report("ERPNext", len(rows), injected, observed, unexpected, unchanged)
     for item in skipped:
@@ -367,7 +445,11 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
 
 def finish(problems: list[str], unchanged: bool, verbose: bool,
            payload: dict | None, expected: dict[str, int]) -> bool:
-    if verbose and payload is not None:
+    if (
+        verbose
+        and isinstance(payload, dict)
+        and isinstance(payload.get("checks"), list)
+    ):
         for key, count in sorted(detected_violations(payload).items()):
             print(f"  {key}: {count} (expected {expected.get(key, 0)})")
     for problem in problems:

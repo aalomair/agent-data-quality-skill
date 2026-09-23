@@ -371,6 +371,15 @@ def test_rules_all_pass_exit_zero(tmp_path):
     assert payload["overall"]["checks_passed"] == 2
 
 
+def test_regex_inline_case_insensitive_flag_is_supported(tmp_path):
+    src = write(tmp_path / "regex.csv", "v\nABC\n")
+    rules = write(tmp_path / "regex.yml", "columns:\n  v:\n    regex: '(?i)abc'\n")
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    assert check(payload, "regex", "v")["status"] == "passed"
+
+
 def test_not_evaluated_when_no_eligible_values(tmp_path):
     src = write(tmp_path / "emptycol.csv", "k,v\n1,\n2,\n")
     rules = write(tmp_path / "emptycol.yml", "columns:\n  v:\n    unique: true\n")
@@ -674,7 +683,7 @@ def test_examples_default_absent_and_capped_and_truncated(tmp_path):
     payload, _ = run_json([src2, "--rules", rules, "--examples", "1"], expect=1)
     c = check(payload, "allowed", "v")
     assert c["examples"][0].endswith("…")
-    assert len(c["examples"][0]) <= 101
+    assert len(c["examples"][0]) == 100
 
 
 def test_examples_are_omitted_for_missing_value_violations(basic_csv, basic_rules):

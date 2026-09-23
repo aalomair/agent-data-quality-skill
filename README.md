@@ -2,7 +2,7 @@
 
 **v0.2.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
 
-The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources.
+The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources. Hermes has been tested end-to-end with this skill; Codex and Claude Code are format-compatible, but are not harness-tested in this repository.
 
 ## Repository layout
 
@@ -33,7 +33,7 @@ benchmark/private/             local-only datasets (gitignored)
 | SQLite | `.sqlite`, `.sqlite3`, `.db` | one `--table NAME`; opened with URI `mode=ro`; views unsupported; exact table-name validation and identifier quoting |
 | Parquet | `.parquet`, `.pq` | flat scalar tables; requires optional `pyarrow`; nested fields rejected |
 
-Other databases (PostgreSQL/MySQL/SQL Server): export to a supported file first — v0.1 ships no connectors and implies none.
+Other databases (PostgreSQL/MySQL/SQL Server): export to a supported file first — the current scope ships no connectors and implies none.
 
 ## Install
 
@@ -121,7 +121,7 @@ Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `mi
 
 ## Output contract
 
-One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters each) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
+One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters total including any `…` marker) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
 
 `dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. These scores measure rule applications, not unique bad rows or cells; one value may contribute to multiple checks when multiple rules apply. There is no overall or global DQ score.
 
@@ -140,6 +140,7 @@ For the default concise human-facing summary, follow `skills/data-quality/SKILL.
 - Sources above **50 MiB** or **200,000 rows** are rejected (exit 2) — never sampled, truncated, or reported as if complete. Reads are bounded per format where possible; there is no streaming framework and no promised hard memory ceiling.
 - One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected (exit 2) — data is never truncated, shifted, or silently dropped.
 - Text encoding: strict UTF-8 with BOM acceptance by default; `--encoding NAME` adds other encodings strictly — no lossy replacement or auto-detection.
+- Python regular expressions can catastrophically backtrack on some patterns. Untrusted or automated runs should use a host-enforced execution timeout; the helper does not provide a regex timeout.
 
 ## Read-only boundaries
 
@@ -157,12 +158,13 @@ For the default concise human-facing summary, follow `skills/data-quality/SKILL.
 - No overall or global DQ score; exit 0 alone never proves dataset quality.
 - Escaping adversarial cells as data does not make every host model immune to prompt injection.
 
-## Verification status (as of 2026-09-23)
+## Verification status (as of 2026-09-24)
 
-Environment: Linux, Python 3.11.15, pandas 3.0.5, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1; optional pyarrow was unavailable locally (3 tests skipped).
+Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1, pyarrow 25.0.1.
 
-- **Local release-candidate run** — **113 passed, 3 skipped**.
+- **Local validation** — **140 passed**.
 - **GitHub Actions on commit `d08feb2`** — **116 passed**.
+- **Hermes end-to-end verification** — the tagged `v0.2.0` bundle was installed in a temporary `HERMES_HOME` and exercised; profiles-first behavior, rule provenance separation, deterministic scores, no global score, limitations, read-only next actions, and unchanged source all passed.
 - **UCI Adult benchmark** — **60/60**, 0 unexpected, source unchanged.
 - **ERPNext benchmark** — **60/60**, 0 unexpected, source unchanged.
 - **Healthcare messy/clean pair** — profile → inferred candidate rules → deterministic checks/scores → human-report validation passed; external files were used transiently and are not committed.
@@ -182,7 +184,7 @@ CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14; t
 
 ## Roadmap (deferred by design)
 
-v0.1.0 stops at the scope described above. The following are deliberately **not** implemented, and no extension infrastructure is being designed for them now:
+The current scope stops at the capabilities described above. The following are deliberately **not** implemented, and no extension infrastructure is being designed for them now:
 
 - **Baseline comparison** — no stored profiles, no comparison against a previous edition of a dataset.
 - **Drift / distribution-change detection** — no change detection between runs.

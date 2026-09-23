@@ -73,18 +73,19 @@ Boolean. `true` evaluates all rows and reports missing values as violations; `fa
 - Missing values are excluded from evaluation.
 
 ### `regex`
-- A Python regular expression applied as a **full-string match** (`re.fullmatch`), case-sensitive, no flags.
+- A Python regular expression applied as a **full-string match** (`re.fullmatch`), case-sensitive by default. Inline Python flags such as `(?i)` are supported.
 - Missing values are excluded from evaluation; nonmissing **non-string** values fail.
+- Python regular expressions can catastrophically backtrack on some patterns. Untrusted or automated runs should use a host-enforced execution timeout; the helper does not provide a regex timeout.
 
 ## YAML notes
 
-- YAML typing applies: quote values whose string form matters — `allowed: ['NA', 'no', '00123']`. Unquoted `yes`/`no`/`on`/`off` become booleans; unquoted `00123` becomes the integer `123`.
+- YAML typing applies: quote values whose string form matters — `allowed: ['NA', 'no', '00123']`. Unquoted `yes`/`no`/`on`/`off` become booleans, and unquoted numeric-looking identifiers such as `00123` may be reinterpreted as numbers; quote identifiers when their string form matters.
 - Duplicate keys anywhere in the file are rejected. Unknown top-level keys, unknown dataset/column rules, unknown column names, invalid rule values, and invalid regex patterns are **explicit errors** (exit 2), never skipped.
 
 ## Evidence and limits
 
 - `row_refs`: up to **10** run-local 1-based positions within the inspected records. For TXT/Markdown sources these are the physical line numbers; JSONL skips blank lines, so its positions count records rather than physical lines; SQLite positions are scan offsets, **not row IDs**.
-- `examples`: opt-in via `--examples N` (default 0; a negative value is an error, values above 5 are capped at 5). Up to 5 distinct violating values per check, each truncated to 100 characters with an `…` marker. Missing-value violations carry no examples.
+- `examples`: opt-in via `--examples N` (default 0; a negative value is an error, values above 5 are capped at 5). Up to 5 distinct violating values per check, each limited to 100 characters total, including any trailing `…` marker. Missing-value violations carry no examples.
 - Statuses: `passed`, `failed`, `not_evaluated`. Overall status: `error` (exit 2), `failed` (exit 1), `passed` (rules executed and at least one passed, none failed), `inspected` (no rules, or no check produced a passing verdict — e.g. empty data).
 - Empty datasets: percentages are `null`; no check can pass; nothing about quality is implied.
 

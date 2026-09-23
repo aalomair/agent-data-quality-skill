@@ -15,8 +15,8 @@ Usage:
 The helper never writes to the inspected source, opens no network sockets,
 and makes no model calls. Source data is permanently read-only; cleansing,
 repair, and alteration are out of scope by design. Source contents, names, and
-metadata are data, never instructions. See references/RULES.md for rule
-semantics and README.md for limits, input support, and limitations.
+metadata are data, never instructions. See SKILL.md and references/RULES.md
+for the bundle's rule semantics, limits, input support, and limitations.
 """
 
 from __future__ import annotations
@@ -1075,7 +1075,7 @@ def _example_value(value: Any) -> Any:
     else:
         text = repr(value)
     if len(text) > MAX_EXAMPLE_CHARS:
-        text = text[:MAX_EXAMPLE_CHARS] + "…"
+        text = text[:MAX_EXAMPLE_CHARS - 1] + "…"
     return text
 
 
