@@ -1,6 +1,6 @@
 # agent-data-quality-skill
 
-**v0.2.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
+**v0.2.1** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
 
 The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources. Hermes has been tested end-to-end with this skill; Codex and Claude Code are format-compatible, but are not harness-tested in this repository.
 
@@ -127,13 +127,19 @@ One compact JSON document on stdout with `schema_version`, `source`, `selection`
 
 For the default concise human-facing summary, follow `skills/data-quality/SKILL.md`; raw JSON is machine evidence and should be shown only when requested.
 
-## v0.2.0 highlights
+## v0.2.1 release notes
 
-- Deterministic `type` and `max_null_pct` rules.
-- Fixed completeness, uniqueness, and validity classification.
-- Deterministic per-dimension scores with no global score.
-- Explicit LLM workflow and human-facing report contract.
-- Permanent read-only source-data boundary.
+This release candidate hardens correctness and documentation without adding capabilities:
+
+- `required: false` and `unique: false` now disable those checks entirely.
+- CSV/TSV inputs reject NUL characters before parsing.
+- Duplicate or empty column names are rejected consistently across supported readers.
+- JSON and JSONL reject duplicate object keys.
+- Malformed rule sections and null duplicate-row limits are rejected strictly.
+- Numeric profile means use overflow-safe summation for finite large values.
+- The ERPNext benchmark derives expectations from actual injections and validates CLI status, exit codes, and errors.
+- Regex guidance documents catastrophic-backtracking risk and host-enforced execution timeouts.
+- Documentation now corrects YAML identifier quoting, inline regex flags, example-length limits, bundle portability, harness status, and current-scope wording.
 
 ## Limits
 

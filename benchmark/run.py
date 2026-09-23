@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark harness for the Data Quality Skill (v0.2.0).
+"""Benchmark harness for the Data Quality Skill (v0.2.1).
 
 The harness runs the shipped CLI (skills/data-quality/scripts/dq.py) on a real
 dataset, injects four defect types into a *temporary copy*, and compares the
