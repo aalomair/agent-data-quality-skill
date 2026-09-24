@@ -1003,13 +1003,14 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                     "unknown column in dataset.unique_together group "
                     f"{group_number}: {unknown[0]!r} (available columns: {available})",
                 )
-            if group in seen_groups:
+            canonical_group = tuple(sorted(group))
+            if canonical_group in seen_groups:
                 raise DqError(
                     "invalid_rules",
                     "dataset.unique_together cannot repeat the same column group: "
                     f"{list(group)!r}",
                 )
-            seen_groups.add(group)
+            seen_groups.add(canonical_group)
             unique_together.append(list(group))
 
     conditional_required: list[dict[str, Any]] = []
@@ -1020,6 +1021,7 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                 "invalid_rules",
                 "dataset.conditional_required must be a non-empty list of mappings",
             )
+        seen_conditions: list[tuple[str, str, Any]] = []
         for condition_number, raw_condition in enumerate(raw_conditions, start=1):
             if not isinstance(raw_condition, dict):
                 raise DqError(
@@ -1098,6 +1100,24 @@ def load_rules(path: Path, columns: list[str]) -> dict:
                     "dataset.conditional_required 'equals' must be a non-null "
                     f"scalar; numbers must be finite (entry {condition_number})",
                 )
+            if is_missing(equals):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required 'equals' must be nonmissing "
+                    f"under the framework's missing-value semantics (entry {condition_number})",
+                )
+            if any(
+                seen_when == when_column
+                and seen_required == required_column
+                and scalar_eq(equals, seen_equals)
+                for seen_when, seen_required, seen_equals in seen_conditions
+            ):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required cannot repeat the same condition: "
+                    f"{when_column!r} equals {equals!r} then {required_column!r}",
+                )
+            seen_conditions.append((when_column, required_column, equals))
             conditional_required.append(
                 {
                     "when_column": when_column,

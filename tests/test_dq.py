@@ -672,6 +672,38 @@ dataset:
     assert order_line["status"] == "passed"
 
 
+def test_unique_together_preserves_configured_column_order(tmp_path):
+    src = write(tmp_path / "ordered-group.csv", "a,b\n1,x\n2,y\n")
+    rules = write(
+        tmp_path / "ordered-group.yml",
+        "dataset:\n  unique_together:\n    - [b, a]\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    composite = composite_check(payload, ["b", "a"])
+    assert composite["details"] == {"columns": ["b", "a"]}
+
+
+def test_unique_together_rejects_groups_that_differ_only_by_order(tmp_path):
+    src = write(tmp_path / "duplicate-groups.csv", "a,b\n1,x\n")
+    rules = write(
+        tmp_path / "duplicate-groups.yml",
+        """\
+dataset:
+  unique_together:
+    - [a, b]
+    - [b, a]
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["checks"] == []
+    assert payload["errors"][0]["code"] == "invalid_rules"
+    assert "repeat" in payload["errors"][0]["message"].lower()
+
+
 def test_unique_together_evidence_is_bounded(tmp_path):
     records = [{"a": "same", "b": "same"} for _ in range(12)]
     src = write(tmp_path / "many-composite.json", json.dumps(records))
@@ -878,6 +910,93 @@ def test_conditional_required_source_is_unchanged(tmp_path):
     run_json([src, "--rules", rules], expect=1)
 
     assert sha256(src) == before
+
+
+@pytest.mark.parametrize("equals_yaml", ["''", "'   '"])
+def test_conditional_required_rejects_missing_trigger_values(tmp_path, equals_yaml):
+    src = write(tmp_path / "conditional-missing-trigger.csv", "status,closed_date\nOpen,ok\n")
+    rules = write(
+        tmp_path / "conditional-missing-trigger.yml",
+        f"""\
+dataset:
+  conditional_required:
+    - when:
+        column: status
+        equals: {equals_yaml}
+      then_required: closed_date
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["checks"] == []
+    assert payload["errors"][0]["code"] == "invalid_rules"
+    assert "nonmissing" in payload["errors"][0]["message"].lower()
+
+
+def test_conditional_required_rejects_semantically_duplicate_entries(tmp_path):
+    src = write(
+        tmp_path / "conditional-duplicate.json",
+        json.dumps([{"status": 1, "closed_date": "ok"}]),
+    )
+    rules = write(
+        tmp_path / "conditional-duplicate.yml",
+        """\
+dataset:
+  conditional_required:
+    - when:
+        column: status
+        equals: 1
+      then_required: closed_date
+    - when:
+        column: status
+        equals: 1.0
+      then_required: closed_date
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["checks"] == []
+    assert payload["errors"][0]["code"] == "invalid_rules"
+    assert "repeat" in payload["errors"][0]["message"].lower()
+
+
+def test_conditional_required_duplicate_detection_keeps_scalar_distinctions(tmp_path):
+    src = write(
+        tmp_path / "conditional-distinct-scalars.json",
+        json.dumps(
+            [
+                {"status": True, "closed_date": "bool"},
+                {"status": 1, "closed_date": "number"},
+                {"status": "1", "closed_date": "string"},
+            ]
+        ),
+    )
+    rules = write(
+        tmp_path / "conditional-distinct-scalars.yml",
+        """\
+dataset:
+  conditional_required:
+    - when:
+        column: status
+        equals: true
+      then_required: closed_date
+    - when:
+        column: status
+        equals: 1
+      then_required: closed_date
+    - when:
+        column: status
+        equals: "1"
+      then_required: closed_date
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    assert len(payload["checks"]) == 3
+    assert all(item["status"] == "passed" for item in payload["checks"])
 
 
 @pytest.mark.parametrize(
