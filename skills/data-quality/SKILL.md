@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.10+ plus the dependencies in scripts/requirements.txt (Parquet needs optional pyarrow). Reads local files and one local SQLite table; no network access. Tested on Linux with Python 3.14.
 metadata:
   author: Abdullatif Alomair
-  version: "0.2.1"
+  version: "0.3.0"
 ---
 
 # Data Quality Skill

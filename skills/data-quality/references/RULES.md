@@ -1,4 +1,4 @@
-# Rule semantics (v0.2.1)
+# Rule semantics (v0.3.0)
 
 Reference for how `scripts/dq.py` evaluates data and rules. Every count is deterministic and computed from preserved values; source data is permanently read-only, and cleansing, repair, and alteration are out of scope by design.
 
@@ -54,7 +54,7 @@ dataset:
     - [order_id, line_number]
 ```
 
-- The value must be a non-empty list of groups. Each group must contain at least two known, distinct column names. A repeated group is rejected as an `invalid_rules` error (exit 2); groups are evaluated in YAML order.
+- The value must be a non-empty list of groups. Each group must contain at least two known, distinct column names. A repeated group, including the same set of columns in a different order, is rejected as an `invalid_rules` error (exit 2); groups are evaluated in YAML order and emitted evidence preserves each configured column order.
 - Each row contributes one composite key for every configured group. Nonmissing values use the existing scalar equality semantics: strings are exact and case-sensitive, numbers compare numerically (`1` equals `1.0`), and booleans remain distinct from numbers.
 - Missing values participate rather than being skipped. Native nulls and empty/whitespace-only strings use one canonical missing component, so they can form repeated composite keys with one another.
 - `evaluated` is the total row count, including rows with missing components. An empty dataset has `evaluated: 0` and status `not_evaluated`.
@@ -73,7 +73,8 @@ dataset:
       then_required: closed_date
 ```
 
-- The value must be a non-empty list of entries. Each entry has exactly one `when` mapping (`column` and `equals`) and one `then_required` column name. Both columns must be known and different; `equals` must be a non-null scalar (string, boolean, or finite number). Unknown keys, missing fields, null/list/mapping trigger values, and same-column conditions are `invalid_rules` errors (exit 2).
+- The value must be a non-empty list of entries. Each entry has exactly one `when` mapping (`column` and `equals`) and one `then_required` column name. Both columns must be known and different; `equals` must be a non-null, nonmissing scalar (string, boolean, or finite number). Empty and whitespace-only strings are missing under the standard definition. Unknown keys, missing fields, null/list/mapping trigger values, and same-column conditions are `invalid_rules` errors (exit 2).
+- Semantically duplicate entries with the same trigger column, scalar-equal `equals` value, and required column are rejected as `invalid_rules` errors (exit 2); therefore `1` and `1.0` collide, while booleans remain distinct from numbers and strings do not equal numbers.
 - A row is triggered only when the `when.column` value exactly matches `when.equals`: strings are case-sensitive, numbers compare numerically (`1` equals `1.0`), booleans remain distinct from numbers, and no string/number conversion occurs. A missing trigger value never matches a non-null `equals` value.
 - For each entry, `evaluated` is the number of triggered rows. A triggered row violates the check when `then_required` is missing under the standard missing-value definition (native null or empty/whitespace-only string). Rows that do not match the trigger are not evaluated for that entry. This primitive is classified as `completeness` because it checks conditional field presence; it does not add a fourth top-level dimension.
 - A check with no triggered rows has `evaluated: 0`, `violations: 0`, and status `not_evaluated`; it is excluded from the completeness aggregate. Multiple entries emit independent checks and contribute independently to that aggregate.

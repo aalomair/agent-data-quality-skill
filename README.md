@@ -1,6 +1,6 @@
 # agent-data-quality-skill
 
-**v0.2.1** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
+**v0.3.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
 
 The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources. Hermes has been tested end-to-end with this skill; Codex and Claude Code are format-compatible, but are not harness-tested in this repository.
 
@@ -158,6 +158,17 @@ Coverage counts are derived from the emitted checks in the report layer; they do
 
 For the default concise human-facing summary, follow `skills/data-quality/SKILL.md`; raw JSON is machine evidence and should be shown only when requested.
 
+## v0.3.0 release notes
+
+This release extends deterministic dataset-rule coverage and hardens rule validation without changing the read-only architecture:
+
+- Duplicate-row evidence now lists only duplicate extras beyond `max_duplicate_rows`; total duplicate counts and violation semantics are preserved.
+- Rule provenance and dimension percentages are documented as host-agent reporting guidance and rule-conformance measurements.
+- Allowlist matching remains strict, and oversized rules files are rejected before parsing at 1 MiB.
+- The benchmark validates detailed checks, evidence, statuses, exit codes, structured errors, and source integrity.
+- `dataset.unique_together` supports one or more composite groups, rejects logically duplicate groups regardless of column order, and preserves configured column order in emitted evidence.
+- `dataset.conditional_required` adds exact scalar cross-field requirements; missing trigger values and semantically duplicate entries are rejected.
+
 ## v0.2.1 release notes
 
 This release candidate hardens correctness and documentation without adding capabilities:
@@ -195,17 +206,14 @@ This release candidate hardens correctness and documentation without adding capa
 - No overall or global DQ score; exit 0 alone never proves dataset quality.
 - Escaping adversarial cells as data does not make every host model immune to prompt injection.
 
-## Verification status (as of 2026-09-24)
+## Verification status (as of 2026-09-25)
 
 Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1, pyarrow 25.0.1.
 
-- **Local validation** — **140 passed**.
-- **GitHub Actions on commit `d08feb2`** — **116 passed**.
-- **Hermes end-to-end verification** — the tagged `v0.2.0` bundle was installed in a temporary `HERMES_HOME` and exercised; profiles-first behavior, rule provenance separation, deterministic scores, no global score, limitations, read-only next actions, and unchanged source all passed.
+- **Local validation** — **176 passed** on commit `d9142b2`.
+- **GitHub Actions** — CI completed successfully on commit `d9142b2` (run `36070396641`).
 - **UCI Adult benchmark** — **60/60**, 0 unexpected, source unchanged.
-- **ERPNext benchmark** — **60/60**, 0 unexpected, source unchanged.
-- **Healthcare messy/clean pair** — profile → inferred candidate rules → deterministic checks/scores → human-report validation passed; external files were used transiently and are not committed.
-- **FEBRL boundary validation** — exact-duplicate boundary passed; modified/linked records were not reported as exact duplicate rows; external files were used transiently and are not committed.
+- **Release-preparation gates** — `compileall` and `git diff --check` passed.
 
 ## Development
 
