@@ -14,8 +14,8 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - `max_null_pct` evaluates **all rows** to calculate the column's missing percentage.
 - Every other column rule **excludes missing values** from evaluation. Combine with `required` when missing values must also fail.
 - `evaluated` = number of eligible values for the rule; for `max_null_pct`, this is the total row count. **No eligible values → status `not_evaluated`**, never `passed`.
-- Output order: dataset rule first, then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
-- Each check carries a fixed dimension: `required` and `max_null_pct` are `completeness`; `unique` and `max_duplicate_rows` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
+- Output order: configured dataset checks first (`max_duplicate_rows`, then each `unique_together` group in YAML order), then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
+- Each check carries a fixed dimension: `required` and `max_null_pct` are `completeness`; `unique`, `max_duplicate_rows`, and `unique_together` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
 
 ## Dimension rule-conformance scores
 
@@ -44,6 +44,23 @@ Only failures of explicit/confirmed constraints belong under **Confirmed finding
 - `details.duplicate_rows` (and `profile.duplicate_rows`) = the total number of duplicate extras, including rows within the allowance.
 - `violations` = duplicate extras **beyond the allowance**: `max(0, duplicates − max_duplicate_rows)`. With `max_duplicate_rows: 0`, every duplicate row counts.
 - `row_refs` lists only the positions of duplicate extras **beyond the allowance**, bounded by the evidence limit; allowed duplicate extras are excluded. `row_refs_truncated` applies only to those violating duplicate positions.
+
+## `dataset.unique_together`
+
+```yaml
+dataset:
+  unique_together:
+    - [country_code, year]
+    - [order_id, line_number]
+```
+
+- The value must be a non-empty list of groups. Each group must contain at least two known, distinct column names. A repeated group is rejected as an `invalid_rules` error (exit 2); groups are evaluated in YAML order.
+- Each row contributes one composite key for every configured group. Nonmissing values use the existing scalar equality semantics: strings are exact and case-sensitive, numbers compare numerically (`1` equals `1.0`), and booleans remain distinct from numbers.
+- Missing values participate rather than being skipped. Native nulls and empty/whitespace-only strings use one canonical missing component, so they can form repeated composite keys with one another.
+- `evaluated` is the total row count, including rows with missing components. An empty dataset has `evaluated: 0` and status `not_evaluated`.
+- A repeated composite-key group marks **all of its member rows** as violations, matching the column-level `unique` rule. For example, a key occurring three times contributes three violations.
+- Each group emits one dataset-level check with `rule: "unique_together"`, `dimension: "uniqueness"`, `scope: "dataset"`, `column: null`, and a deterministic `columns` list. `details.columns` repeats that configured list for machine-readable evidence.
+- `row_refs` contains only violating member positions, bounded by the evidence limit; `row_refs_truncated` reports omitted violating positions. Each configured group contributes independently to the uniqueness dimension aggregate.
 
 ## Column rules
 

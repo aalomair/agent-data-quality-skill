@@ -117,7 +117,7 @@ Exit codes: `0` = inspected / no failed rules · `1` = rule violations · `2` = 
 
 ## Rules
 
-Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and one dataset rule, `max_duplicate_rows`. Counting semantics (missing values, missing percentages, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
+Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and two dataset rules: `max_duplicate_rows` and `unique_together`. A compound-key rule is written as a non-empty list of groups, for example `dataset: {unique_together: [[country_code, year]]}`; each group must contain at least two known, distinct columns. Counting semantics (missing values, missing percentages, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
 
 ## Rule provenance in agent reports
 
@@ -131,7 +131,7 @@ Only failed explicit/confirmed constraints belong under **Confirmed findings**. 
 
 ## Output contract
 
-One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters total including any `…` marker) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
+One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. A `unique_together` check leaves `column` as `null` and identifies its configured group with deterministic `columns` and `details.columns` lists. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters total including any `…` marker) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
 
 `dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. These are **rule-conformance percentages**: they measure how the supplied rule applications performed, not intrinsic dataset cleanliness or the percentage of the dataset that is clean. There is no overall or global DQ score.
 

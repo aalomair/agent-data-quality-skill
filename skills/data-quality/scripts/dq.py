@@ -63,12 +63,13 @@ RULE_ORDER = (
     "regex",
 )
 COLUMN_RULES = frozenset(RULE_ORDER)
-DATASET_RULES = frozenset({"max_duplicate_rows"})
+DATASET_RULES = frozenset({"max_duplicate_rows", "unique_together"})
 RULE_DIMENSIONS = {
     "required": "completeness",
     "max_null_pct": "completeness",
     "unique": "uniqueness",
     "max_duplicate_rows": "uniqueness",
+    "unique_together": "uniqueness",
     "type": "validity",
     "min": "validity",
     "max": "validity",
@@ -256,6 +257,13 @@ def value_key(value: Any) -> tuple:
     if isinstance(value, str):
         return ("string", value)
     return ("other", repr(value))
+
+
+def composite_value_key(value: Any) -> tuple:
+    """Use one canonical key for all missing composite-key values."""
+    if is_missing(value):
+        return ("missing",)
+    return value_key(value)
 
 
 def _scalar_group(value: Any) -> str:
@@ -954,6 +962,53 @@ def load_rules(path: Path, columns: list[str]) -> dict:
             raise DqError("invalid_rules", "'columns' must be a mapping")
     else:
         columns_section = {}
+
+    unique_together: list[list[str]] = []
+    if "unique_together" in dataset_section:
+        raw_groups = dataset_section["unique_together"]
+        if not isinstance(raw_groups, list) or not raw_groups:
+            raise DqError(
+                "invalid_rules",
+                "dataset.unique_together must be a non-empty list of column groups",
+            )
+        seen_groups: set[tuple[str, ...]] = set()
+        for group_number, raw_group in enumerate(raw_groups, start=1):
+            if not isinstance(raw_group, list) or len(raw_group) < 2:
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.unique_together groups must each contain at least 2 columns "
+                    f"(group {group_number})",
+                )
+            if not all(isinstance(name, str) for name in raw_group):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.unique_together groups must contain only column names "
+                    f"(group {group_number})",
+                )
+            group = tuple(raw_group)
+            if len(set(group)) != len(group):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.unique_together groups cannot contain a duplicate column "
+                    f"(group {group_number})",
+                )
+            unknown = [name for name in group if name not in columns]
+            if unknown:
+                available = ", ".join(repr(column) for column in columns)
+                raise DqError(
+                    "invalid_rules",
+                    "unknown column in dataset.unique_together group "
+                    f"{group_number}: {unknown[0]!r} (available columns: {available})",
+                )
+            if group in seen_groups:
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.unique_together cannot repeat the same column group: "
+                    f"{list(group)!r}",
+                )
+            seen_groups.add(group)
+            unique_together.append(list(group))
+
     normalised_columns: list[tuple[str, dict]] = []
     for name, rule_values in columns_section.items():
         if name not in columns:
@@ -1059,7 +1114,10 @@ def load_rules(path: Path, columns: list[str]) -> dict:
             )
         normalised_columns.append((name, compiled))
     return {
-        "dataset": {"max_duplicate_rows": max_duplicate_rows},
+        "dataset": {
+            "max_duplicate_rows": max_duplicate_rows,
+            "unique_together": unique_together,
+        },
         "columns": normalised_columns,
     }
 
@@ -1125,6 +1183,38 @@ def _column_check(
     return check
 
 
+def _unique_together_check(
+    rows: list[list[Any]], column_index: dict[str, int], group: list[str]
+) -> dict:
+    """Build one deterministic dataset-level composite uniqueness check."""
+    indices = [column_index[name] for name in group]
+    keys = [
+        tuple(composite_value_key(row[index]) for index in indices) for row in rows
+    ]
+    counts: dict[tuple, int] = {}
+    for key in keys:
+        counts[key] = counts.get(key, 0) + 1
+    violating = [
+        position
+        for position, key in enumerate(keys, start=1)
+        if counts[key] > 1
+    ]
+    return {
+        "rule": "unique_together",
+        "dimension": RULE_DIMENSIONS["unique_together"],
+        "scope": "dataset",
+        "column": None,
+        "columns": list(group),
+        "evaluated": len(rows),
+        "violations": len(violating),
+        "status": "not_evaluated" if not rows else
+                  ("failed" if violating else "passed"),
+        "row_refs": violating[:MAX_EVIDENCE_REFS],
+        "row_refs_truncated": len(violating) > MAX_EVIDENCE_REFS,
+        "details": {"columns": list(group)},
+    }
+
+
 def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dict]:
     checks: list[dict] = []
     columns = loaded.columns
@@ -1166,6 +1256,9 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
         )
 
     column_index = {name: index for index, name in enumerate(columns)}
+    for group in rules["dataset"]["unique_together"]:
+        checks.append(_unique_together_check(rows, column_index, group))
+
     for name, rule_values in rules["columns"]:
         index = column_index[name]
         values = [row[index] for row in rows]

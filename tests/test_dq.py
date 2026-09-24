@@ -114,6 +114,13 @@ def check(payload, rule, column=None):
     raise AssertionError(f"check {rule}/{column} not found in {payload['checks']}")
 
 
+def composite_check(payload, columns):
+    for item in payload["checks"]:
+        if item["rule"] == "unique_together" and item.get("columns") == columns:
+            return item
+    raise AssertionError(f"composite check {columns} not found in {payload['checks']}")
+
+
 @pytest.fixture()
 def basic_csv(tmp_path):
     return write(tmp_path / "basic.csv", BASIC_CSV)
@@ -571,6 +578,122 @@ def test_unique_counts_all_rows_in_repeated_groups(tmp_path):
     assert c["row_refs"] == [1, 2, 3]
 
 
+def test_unique_together_uses_exact_composite_keys_and_dimension_aggregation(tmp_path):
+    records = [
+        {"a": 1, "b": "x"},
+        {"a": 1.0, "b": "x"},
+        {"a": True, "b": "x"},
+        {"a": "1", "b": "x"},
+        {"a": 1, "b": "y"},
+    ]
+    src = write(tmp_path / "composite.json", json.dumps(records))
+    rules = write(
+        tmp_path / "composite.yml",
+        """\
+dataset:
+  unique_together:
+    - [a, b]
+columns:
+  a:
+    unique: true
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    composite = composite_check(payload, ["a", "b"])
+    assert composite["dimension"] == "uniqueness"
+    assert composite["scope"] == "dataset"
+    assert composite["column"] is None
+    assert composite["evaluated"] == 5
+    assert composite["violations"] == 2
+    assert composite["status"] == "failed"
+    assert composite["row_refs"] == [1, 2]
+    assert composite["row_refs_truncated"] is False
+    assert composite["columns"] == ["a", "b"]
+    assert composite["details"] == {"columns": ["a", "b"]}
+    assert payload["dimensions"]["uniqueness"] == {
+        "score": 50.0,
+        "evaluated": 10,
+        "violations": 5,
+    }
+
+
+def test_unique_together_missing_values_share_a_key_and_are_evaluated(tmp_path):
+    records = [
+        {"a": "", "b": "x"},
+        {"a": None, "b": "x"},
+        {"a": "  ", "b": "x"},
+        {"a": "y", "b": "x"},
+    ]
+    src = write(tmp_path / "missing-composite.json", json.dumps(records))
+    rules = write(
+        tmp_path / "missing-composite.yml",
+        "dataset:\n  unique_together:\n    - [a, b]\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    composite = composite_check(payload, ["a", "b"])
+    assert (composite["evaluated"], composite["violations"]) == (4, 3)
+    assert composite["row_refs"] == [1, 2, 3]
+    assert composite["status"] == "failed"
+
+
+def test_unique_together_supports_multiple_groups(tmp_path):
+    src = write(
+        tmp_path / "groups.csv",
+        "country,year,order,line\nSA,2024,O1,1\nSA,2024,O1,2\nUS,2024,O2,1\n",
+    )
+    rules = write(
+        tmp_path / "groups.yml",
+        """\
+dataset:
+  unique_together:
+    - [country, year]
+    - [order, line]
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    country_year = composite_check(payload, ["country", "year"])
+    order_line = composite_check(payload, ["order", "line"])
+    assert (country_year["violations"], country_year["row_refs"]) == (2, [1, 2])
+    assert (order_line["violations"], order_line["row_refs"]) == (0, [])
+    assert order_line["status"] == "passed"
+
+
+def test_unique_together_evidence_is_bounded(tmp_path):
+    records = [{"a": "same", "b": "same"} for _ in range(12)]
+    src = write(tmp_path / "many-composite.json", json.dumps(records))
+    rules = write(
+        tmp_path / "many-composite.yml",
+        "dataset:\n  unique_together:\n    - [a, b]\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    composite = composite_check(payload, ["a", "b"])
+    assert composite["evaluated"] == 12
+    assert composite["violations"] == 12
+    assert composite["row_refs"] == list(range(1, 11))
+    assert composite["row_refs_truncated"] is True
+
+
+def test_unique_together_source_is_unchanged(tmp_path):
+    src = write(tmp_path / "read-only.csv", "a,b\n1,x\n1,x\n")
+    rules = write(
+        tmp_path / "read-only.yml",
+        "dataset:\n  unique_together:\n    - [a, b]\n",
+    )
+    before = sha256(src)
+
+    run_json([src, "--rules", rules], expect=1)
+
+    assert sha256(src) == before
+
+
 # --------------------------------------------------------------------------
 # Missing / blank / literal NA semantics
 # --------------------------------------------------------------------------
@@ -868,6 +991,10 @@ def test_unsupported_suffix_is_error(tmp_path):
         ("columns:\n  a:\n    type: date\n", "integer"),
         ("top: 1\n", "unknown top-level key"),
         ("dataset:\n  max_duplicate_rows: -1\n", "max_duplicate_rows"),
+        ("dataset:\n  unique_together:\n    - [a, z]\n", "unknown column"),
+        ("dataset:\n  unique_together:\n    - [a, a]\n", "duplicate column"),
+        ("dataset:\n  unique_together:\n    - [a]\n", "at least 2"),
+        ("dataset:\n  unique_together: []\n", "non-empty"),
         ("columns:\n  a:\n    required: true\ncolumns:\n  b:\n    unique: true\n", "duplicate"),
         ("", "empty rules file"),
         ("- just\n- a list\n", ""),
