@@ -63,10 +63,13 @@ RULE_ORDER = (
     "regex",
 )
 COLUMN_RULES = frozenset(RULE_ORDER)
-DATASET_RULES = frozenset({"max_duplicate_rows", "unique_together"})
+DATASET_RULES = frozenset(
+    {"max_duplicate_rows", "unique_together", "conditional_required"}
+)
 RULE_DIMENSIONS = {
     "required": "completeness",
     "max_null_pct": "completeness",
+    "conditional_required": "completeness",
     "unique": "uniqueness",
     "max_duplicate_rows": "uniqueness",
     "unique_together": "uniqueness",
@@ -1009,6 +1012,100 @@ def load_rules(path: Path, columns: list[str]) -> dict:
             seen_groups.add(group)
             unique_together.append(list(group))
 
+    conditional_required: list[dict[str, Any]] = []
+    if "conditional_required" in dataset_section:
+        raw_conditions = dataset_section["conditional_required"]
+        if not isinstance(raw_conditions, list) or not raw_conditions:
+            raise DqError(
+                "invalid_rules",
+                "dataset.conditional_required must be a non-empty list of mappings",
+            )
+        for condition_number, raw_condition in enumerate(raw_conditions, start=1):
+            if not isinstance(raw_condition, dict):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required entries must be mappings "
+                    f"(entry {condition_number})",
+                )
+            unknown = [
+                key for key in raw_condition if key not in {"when", "then_required"}
+            ]
+            if unknown:
+                raise DqError(
+                    "invalid_rules",
+                    "unknown dataset.conditional_required key: "
+                    f"{unknown[0]!r} (entry {condition_number})",
+                )
+            if "when" not in raw_condition or "then_required" not in raw_condition:
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required entries require 'when' and "
+                    f"'then_required' (entry {condition_number})",
+                )
+
+            raw_when = raw_condition["when"]
+            if not isinstance(raw_when, dict):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required 'when' must be a mapping "
+                    f"(entry {condition_number})",
+                )
+            unknown_when = [
+                key for key in raw_when if key not in {"column", "equals"}
+            ]
+            if unknown_when:
+                raise DqError(
+                    "invalid_rules",
+                    "unknown dataset.conditional_required 'when' key: "
+                    f"{unknown_when[0]!r} (entry {condition_number})",
+                )
+            if "column" not in raw_when or "equals" not in raw_when:
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required 'when' requires 'column' and "
+                    f"'equals' (entry {condition_number})",
+                )
+
+            when_column = raw_when["column"]
+            required_column = raw_condition["then_required"]
+            if not isinstance(when_column, str) or when_column not in columns:
+                available = ", ".join(repr(column) for column in columns)
+                raise DqError(
+                    "invalid_rules",
+                    "unknown column in dataset.conditional_required 'when': "
+                    f"{when_column!r} (available columns: {available})",
+                )
+            if not isinstance(required_column, str) or required_column not in columns:
+                available = ", ".join(repr(column) for column in columns)
+                raise DqError(
+                    "invalid_rules",
+                    "unknown column in dataset.conditional_required 'then_required': "
+                    f"{required_column!r} (available columns: {available})",
+                )
+            if when_column == required_column:
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required 'when' and 'then_required' "
+                    "must name different columns",
+                )
+
+            equals = raw_when["equals"]
+            if not isinstance(equals, (str, int, float, bool)) or (
+                isinstance(equals, float) and not math.isfinite(equals)
+            ):
+                raise DqError(
+                    "invalid_rules",
+                    "dataset.conditional_required 'equals' must be a non-null "
+                    f"scalar; numbers must be finite (entry {condition_number})",
+                )
+            conditional_required.append(
+                {
+                    "when_column": when_column,
+                    "equals": equals,
+                    "required_column": required_column,
+                }
+            )
+
     normalised_columns: list[tuple[str, dict]] = []
     for name, rule_values in columns_section.items():
         if name not in columns:
@@ -1117,6 +1214,7 @@ def load_rules(path: Path, columns: list[str]) -> dict:
         "dataset": {
             "max_duplicate_rows": max_duplicate_rows,
             "unique_together": unique_together,
+            "conditional_required": conditional_required,
         },
         "columns": normalised_columns,
     }
@@ -1215,6 +1313,43 @@ def _unique_together_check(
     }
 
 
+def _conditional_required_check(
+    rows: list[list[Any]], column_index: dict[str, int], condition: dict
+) -> dict:
+    """Build one fixed conditional-required completeness check."""
+    when_index = column_index[condition["when_column"]]
+    required_index = column_index[condition["required_column"]]
+    triggered: list[int] = []
+    violating: list[int] = []
+    for position, row in enumerate(rows, start=1):
+        if not scalar_eq(row[when_index], condition["equals"]):
+            continue
+        triggered.append(position)
+        if is_missing(row[required_index]):
+            violating.append(position)
+    return {
+        "rule": "conditional_required",
+        "dimension": RULE_DIMENSIONS["conditional_required"],
+        "scope": "dataset",
+        "column": None,
+        "columns": [condition["when_column"], condition["required_column"]],
+        "evaluated": len(triggered),
+        "violations": len(violating),
+        "status": "not_evaluated" if not triggered else
+                  ("failed" if violating else "passed"),
+        "row_refs": violating[:MAX_EVIDENCE_REFS],
+        "row_refs_truncated": len(violating) > MAX_EVIDENCE_REFS,
+        "details": {
+            "when": {
+                "column": condition["when_column"],
+                "equals": condition["equals"],
+            },
+            "required_column": condition["required_column"],
+            "triggered_rows": len(triggered),
+        },
+    }
+
+
 def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dict]:
     checks: list[dict] = []
     columns = loaded.columns
@@ -1258,6 +1393,8 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
     column_index = {name: index for index, name in enumerate(columns)}
     for group in rules["dataset"]["unique_together"]:
         checks.append(_unique_together_check(rows, column_index, group))
+    for condition in rules["dataset"]["conditional_required"]:
+        checks.append(_conditional_required_check(rows, column_index, condition))
 
     for name, rule_values in rules["columns"]:
         index = column_index[name]

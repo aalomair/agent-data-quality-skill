@@ -121,6 +121,14 @@ def composite_check(payload, columns):
     raise AssertionError(f"composite check {columns} not found in {payload['checks']}")
 
 
+def conditional_check(payload, when_column, required_column):
+    columns = [when_column, required_column]
+    for item in payload["checks"]:
+        if item["rule"] == "conditional_required" and item.get("columns") == columns:
+            return item
+    raise AssertionError(f"conditional check {columns} not found in {payload['checks']}")
+
+
 @pytest.fixture()
 def basic_csv(tmp_path):
     return write(tmp_path / "basic.csv", BASIC_CSV)
@@ -692,6 +700,212 @@ def test_unique_together_source_is_unchanged(tmp_path):
     run_json([src, "--rules", rules], expect=1)
 
     assert sha256(src) == before
+
+
+def test_conditional_required_passes_for_triggered_rows_only(tmp_path):
+    records = [
+        {"status": "Open", "closed_date": None},
+        {"status": "Closed", "closed_date": "2026-01-01"},
+    ]
+    src = write(tmp_path / "conditional-pass.json", json.dumps(records))
+    rules = write(
+        tmp_path / "conditional-pass.yml",
+        """\
+dataset:
+  conditional_required:
+    - when:
+        column: status
+        equals: Closed
+      then_required: closed_date
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    condition = conditional_check(payload, "status", "closed_date")
+    assert condition["dimension"] == "completeness"
+    assert condition["scope"] == "dataset"
+    assert condition["column"] is None
+    assert condition["evaluated"] == 1
+    assert condition["violations"] == 0
+    assert condition["status"] == "passed"
+    assert condition["row_refs"] == []
+    assert condition["columns"] == ["status", "closed_date"]
+    assert condition["details"] == {
+        "when": {"column": "status", "equals": "Closed"},
+        "required_column": "closed_date",
+        "triggered_rows": 1,
+    }
+    assert payload["dimensions"]["completeness"] == {
+        "score": 100.0,
+        "evaluated": 1,
+        "violations": 0,
+    }
+
+
+def test_conditional_required_counts_missing_triggered_targets(tmp_path):
+    records = [
+        {"status": "Closed", "closed_date": ""},
+        {"status": "Closed", "closed_date": None},
+        {"status": "Closed", "closed_date": "  "},
+        {"status": "Open", "closed_date": None},
+    ]
+    src = write(tmp_path / "conditional-fail.json", json.dumps(records))
+    rules = write(
+        tmp_path / "conditional-fail.yml",
+        "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: Closed\n      then_required: closed_date\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    condition = conditional_check(payload, "status", "closed_date")
+    assert condition["evaluated"] == 3
+    assert condition["violations"] == 3
+    assert condition["status"] == "failed"
+    assert condition["row_refs"] == [1, 2, 3]
+    assert condition["row_refs_truncated"] is False
+    assert condition["details"]["triggered_rows"] == 3
+    assert payload["dimensions"]["completeness"] == {
+        "score": 0.0,
+        "evaluated": 3,
+        "violations": 3,
+    }
+
+
+def test_conditional_required_uses_exact_scalar_trigger_equality(tmp_path):
+    records = [
+        {"status": 1, "closed_date": None},
+        {"status": 1.0, "closed_date": "ok"},
+        {"status": True, "closed_date": None},
+        {"status": "1", "closed_date": None},
+        {"status": 2, "closed_date": None},
+    ]
+    src = write(tmp_path / "conditional-types.json", json.dumps(records))
+    rules = write(
+        tmp_path / "conditional-types.yml",
+        "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: 1\n      then_required: closed_date\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    condition = conditional_check(payload, "status", "closed_date")
+    assert condition["evaluated"] == 2
+    assert condition["violations"] == 1
+    assert condition["row_refs"] == [1]
+    assert condition["details"]["triggered_rows"] == 2
+
+
+def test_conditional_required_is_not_evaluated_without_trigger_matches(tmp_path):
+    src = write(tmp_path / "conditional-none.csv", "status,closed_date\nOpen,\n")
+    rules = write(
+        tmp_path / "conditional-none.yml",
+        "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: Closed\n      then_required: closed_date\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules])
+
+    condition = conditional_check(payload, "status", "closed_date")
+    assert condition["evaluated"] == 0
+    assert condition["violations"] == 0
+    assert condition["status"] == "not_evaluated"
+    assert condition["row_refs"] == []
+    assert payload["dimensions"]["completeness"] == {
+        "score": None,
+        "evaluated": 0,
+        "violations": 0,
+    }
+
+
+def test_conditional_required_supports_multiple_rules_and_aggregates(tmp_path):
+    src = write(
+        tmp_path / "conditional-multiple.csv",
+        "status,closed_date,reason\nClosed,,\nCancelled,,\nOpen,,\n",
+    )
+    rules = write(
+        tmp_path / "conditional-multiple.yml",
+        """\
+dataset:
+  conditional_required:
+    - when:
+        column: status
+        equals: Closed
+      then_required: closed_date
+    - when:
+        column: status
+        equals: Cancelled
+      then_required: reason
+""",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    closed = conditional_check(payload, "status", "closed_date")
+    cancelled = conditional_check(payload, "status", "reason")
+    assert (closed["evaluated"], closed["violations"], closed["row_refs"]) == (1, 1, [1])
+    assert (cancelled["evaluated"], cancelled["violations"], cancelled["row_refs"]) == (1, 1, [2])
+    assert payload["dimensions"]["completeness"] == {
+        "score": 0.0,
+        "evaluated": 2,
+        "violations": 2,
+    }
+
+
+def test_conditional_required_evidence_is_bounded(tmp_path):
+    records = [{"status": "Closed", "closed_date": ""} for _ in range(12)]
+    src = write(tmp_path / "conditional-many.json", json.dumps(records))
+    rules = write(
+        tmp_path / "conditional-many.yml",
+        "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: Closed\n      then_required: closed_date\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    condition = conditional_check(payload, "status", "closed_date")
+    assert condition["evaluated"] == 12
+    assert condition["violations"] == 12
+    assert condition["row_refs"] == list(range(1, 11))
+    assert condition["row_refs_truncated"] is True
+
+
+def test_conditional_required_source_is_unchanged(tmp_path):
+    src = write(tmp_path / "conditional-read-only.csv", "status,closed_date\nClosed,\n")
+    rules = write(
+        tmp_path / "conditional-read-only.yml",
+        "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: Closed\n      then_required: closed_date\n",
+    )
+    before = sha256(src)
+
+    run_json([src, "--rules", rules], expect=1)
+
+    assert sha256(src) == before
+
+
+@pytest.mark.parametrize(
+    "yaml_text,needle",
+    [
+        ("dataset:\n  conditional_required: []\n", "non-empty"),
+        (
+            "dataset:\n  conditional_required:\n    - when:\n        column: missing_status\n        equals: Closed\n      then_required: closed_date\n",
+            "unknown column",
+        ),
+        (
+            "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: Closed\n      then_required: status\n",
+            "different columns",
+        ),
+        (
+            "dataset:\n  conditional_required:\n    - when:\n        column: status\n        equals: null\n      then_required: closed_date\n",
+            "non-null scalar",
+        ),
+    ],
+)
+def test_conditional_required_rejects_invalid_rules(tmp_path, yaml_text, needle):
+    src = write(tmp_path / "conditional-invalid.csv", "status,closed_date\nClosed,\n")
+    rules = write(tmp_path / "conditional-invalid.yml", yaml_text)
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["checks"] == []
+    assert needle in payload["errors"][0]["message"].lower()
 
 
 # --------------------------------------------------------------------------

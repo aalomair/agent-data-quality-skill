@@ -18,7 +18,7 @@ Portability note: this bundle follows the portable Agent Skills layout (`SKILL.m
 
 - The user asks for a data-quality profile, validation, or "is this file clean?" check on a local dataset.
 - You need deterministic counts (missing values, duplicates, rule violations) to cite in a report.
-- The user supplies or requests explicit acceptance rules: required, max_null_pct, unique, type, min, max, allowed, regex, max_duplicate_rows, or dataset-level `unique_together` groups.
+- The user supplies or requests explicit acceptance rules: required, max_null_pct, unique, type, min, max, allowed, regex, max_duplicate_rows, dataset-level `unique_together` groups, or a narrow dataset-level `conditional_required` rule.
 
 Don't use for: cleansing, repairing, or altering source data (permanently out of scope by design); comparing editions (no baselines/drift detection); semantic or factual validation of text; or non-SQLite databases (export to a supported file first).
 
@@ -59,6 +59,7 @@ python <skill-directory>/scripts/dq.py SOURCE [--rules rules.yml] [--sheet NAME]
 - Sources above 50 MiB or 200,000 rows are rejected; the helper never samples or reports a partial source as complete.
 - UTF-8 with optional BOM is the default encoding; alternate encodings are explicit and strict. The helper makes no network or model calls.
 - `dataset.unique_together` takes a non-empty YAML list of groups; each group has at least two known, distinct columns and is evaluated as a deterministic composite uniqueness check.
+- `dataset.conditional_required` takes a non-empty list of exact `when`/`then_required` entries; a matching non-null scalar trigger evaluates whether the required target column is nonmissing.
 
 Rule semantics and evidence rules are in `references/RULES.md`. This copied bundle is self-contained.
 
@@ -73,7 +74,7 @@ Rule semantics and evidence rules are in `references/RULES.md`. This copied bund
    Only explicit constraints should automatically produce confirmed DQ findings.
 4. **Keep confirmed and candidate rule sets separate when the distinction affects interpretation.** Run explicit/confirmed constraints independently from source-informed and inferred candidates when needed. Do not add provenance fields or new syntax to the YAML rules in this phase; provenance belongs in the host report.
 5. **State candidate uncertainty.** For every source-informed or inferred candidate, record its provenance, rationale, evidence/source, and uncertainty. Never present a candidate as an established business requirement.
-6. **Generate the smallest useful YAML rule set.** Include only the checks needed for the objective. For compound-key constraints, use `dataset.unique_together` with explicit groups of at least two known columns; do not silently add broad rules, and do not treat an unconfirmed candidate as an established acceptance rule.
+6. **Generate the smallest useful YAML rule set.** Include only the checks needed for the objective. For compound-key constraints, use `dataset.unique_together` with explicit groups of at least two known columns. For a narrow cross-field obligation, use `dataset.conditional_required` with one exact scalar trigger and one different required column. Do not silently add broad rules, and do not treat an unconfirmed candidate as an established acceptance rule.
 7. **Run the deterministic engine.** Execute `scripts/dq.py SOURCE --rules RULES.yml` and use its JSON output. The source remains read-only and the engine, not the LLM, performs all rule evaluation, dimension aggregation, and scoring.
 8. **Treat engine results as authoritative.** Preserve the engine's `checks`, `dimensions`, and scores exactly. Use the LLM only to interpret, explain, prioritize findings, state limitations, and suggest next checks or actions.
 9. **Interpret dimension results as rule-conformance.** A dimension percentage measures the conformance of the supplied rule applications, not intrinsic dataset cleanliness. Include coverage context in human-facing summaries: the number of checks, the number of distinct columns or scopes, and the total evaluated rule applications. A dataset can contain missing values and still have 100% completeness rule-conformance when the supplied rules allow that missingness.
@@ -118,6 +119,7 @@ After the deterministic run, produce this concise report by default. Do not dump
 - `--examples` output contains raw source values and is not anonymized or automatically safe to share.
 - Row references are run-local record positions (1-based; text sources use physical line numbers; JSONL skips blank lines so its positions count records), not permanent row IDs.
 - `unique_together` evaluates every row, including rows with missing components; missing components share one canonical key, and every member of a repeated composite-key group is a violation. Its check identifies the group in `columns` and `details.columns` while leaving `column` as `null`.
+- `conditional_required` evaluates only rows whose trigger exactly matches its non-null scalar `equals` value; a missing target is a violation, and no-trigger entries are `not_evaluated`. Its check identifies the trigger and target in `columns` and `details` while leaving `column` as `null`; it does not support operators, compound predicates, coercion, expressions, or code.
 - Exit 0 never proves dataset quality: rules may be absent, or checks may be `not_evaluated` (empty data or no eligible values).
 - XLSX formulas are never executed; their cached values may be missing or stale, and the report warns when formulas are present.
 - Sources beyond the documented limits (50 MiB / 200,000 rows) are rejected, never sampled or truncated.
@@ -130,6 +132,7 @@ After the deterministic run, produce this concise report by default. Do not dump
 - The helper printed valid JSON on stdout and the exit code matched the report's `overall.exit_code`.
 - Every executed check carries rule, fixed dimension, scope/column, evaluated count, violation count, and bounded `row_refs`.
 - `unique_together` checks are classified as uniqueness, identify their configured group deterministically, count all repeated-key members, and contribute to the uniqueness aggregate.
+- `conditional_required` checks are classified as completeness, use exact scalar trigger equality, count only triggered rows as evaluated, and contribute to the completeness aggregate.
 - The report includes deterministic completeness, uniqueness, and validity aggregates; unevaluated checks are excluded and empty dimensions have a `null` score.
 - Human-facing dimension labels use rule-conformance terminology and include evaluated/violations plus coverage context when practical.
 - Reports warn that percentages from materially different rule sets are not directly comparable.

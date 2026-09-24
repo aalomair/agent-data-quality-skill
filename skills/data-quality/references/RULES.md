@@ -14,8 +14,8 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - `max_null_pct` evaluates **all rows** to calculate the column's missing percentage.
 - Every other column rule **excludes missing values** from evaluation. Combine with `required` when missing values must also fail.
 - `evaluated` = number of eligible values for the rule; for `max_null_pct`, this is the total row count. **No eligible values → status `not_evaluated`**, never `passed`.
-- Output order: configured dataset checks first (`max_duplicate_rows`, then each `unique_together` group in YAML order), then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
-- Each check carries a fixed dimension: `required` and `max_null_pct` are `completeness`; `unique`, `max_duplicate_rows`, and `unique_together` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
+- Output order: configured dataset checks first (`max_duplicate_rows`, then each `unique_together` group, then each `conditional_required` entry in YAML order), then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
+- Each check carries a fixed dimension: `required`, `max_null_pct`, and `conditional_required` are `completeness`; `unique`, `max_duplicate_rows`, and `unique_together` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
 
 ## Dimension rule-conformance scores
 
@@ -61,6 +61,24 @@ dataset:
 - A repeated composite-key group marks **all of its member rows** as violations, matching the column-level `unique` rule. For example, a key occurring three times contributes three violations.
 - Each group emits one dataset-level check with `rule: "unique_together"`, `dimension: "uniqueness"`, `scope: "dataset"`, `column: null`, and a deterministic `columns` list. `details.columns` repeats that configured list for machine-readable evidence.
 - `row_refs` contains only violating member positions, bounded by the evidence limit; `row_refs_truncated` reports omitted violating positions. Each configured group contributes independently to the uniqueness dimension aggregate.
+
+## `dataset.conditional_required`
+
+```yaml
+dataset:
+  conditional_required:
+    - when:
+        column: status
+        equals: Closed
+      then_required: closed_date
+```
+
+- The value must be a non-empty list of entries. Each entry has exactly one `when` mapping (`column` and `equals`) and one `then_required` column name. Both columns must be known and different; `equals` must be a non-null scalar (string, boolean, or finite number). Unknown keys, missing fields, null/list/mapping trigger values, and same-column conditions are `invalid_rules` errors (exit 2).
+- A row is triggered only when the `when.column` value exactly matches `when.equals`: strings are case-sensitive, numbers compare numerically (`1` equals `1.0`), booleans remain distinct from numbers, and no string/number conversion occurs. A missing trigger value never matches a non-null `equals` value.
+- For each entry, `evaluated` is the number of triggered rows. A triggered row violates the check when `then_required` is missing under the standard missing-value definition (native null or empty/whitespace-only string). Rows that do not match the trigger are not evaluated for that entry. This primitive is classified as `completeness` because it checks conditional field presence; it does not add a fourth top-level dimension.
+- A check with no triggered rows has `evaluated: 0`, `violations: 0`, and status `not_evaluated`; it is excluded from the completeness aggregate. Multiple entries emit independent checks and contribute independently to that aggregate.
+- Each entry emits `rule: "conditional_required"`, `dimension: "completeness"`, `scope: "dataset"`, `column: null`, and `columns: [when.column, then_required]`. `details` contains the exact `when` mapping, `required_column`, and `triggered_rows` count.
+- `row_refs` contains only triggered rows whose required column is missing, bounded by the evidence limit; `row_refs_truncated` reports omitted violating positions. This primitive has no `or`, `and`, comparison operator, expression, coercion, or user-supplied code.
 
 ## Column rules
 
