@@ -17,12 +17,14 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - Output order: dataset rule first, then columns in the rules file's order; within a column: required, max_null_pct, unique, type, min, max, allowed, regex.
 - Each check carries a fixed dimension: `required` and `max_null_pct` are `completeness`; `unique` and `max_duplicate_rows` are `uniqueness`; `type`, `min`, `max`, `allowed`, and `regex` are `validity`.
 
-## Dimension scores
+## Dimension rule-conformance scores
 
 - The top-level `dimensions` object always contains `completeness`, `uniqueness`, and `validity`.
 - Each dimension sums only checks whose status is not `not_evaluated`; its `evaluated` and `violations` fields are the corresponding sums.
 - `score` = `(sum(evaluated) - sum(violations)) / sum(evaluated) * 100`, rounded to 2 decimals after calculation. A dimension with no evaluated checks has `score: null`.
-- Dimension scores measure rule applications, not unique bad rows or cells; one value may contribute to multiple checks when multiple rules apply.
+- These percentages measure **rule-conformance**: how the supplied rule applications performed. They are not intrinsic measurements of dataset cleanliness. A dataset may contain missing values and still have 100% completeness rule-conformance when the supplied rules allow that missingness.
+- When presenting a dimension in a human-facing report, include coverage context when practical: the number of checks, distinct columns or scopes, and total evaluated rule applications. Derive those counts from the emitted checks; this does not add fields to the deterministic JSON contract.
+- **Dimension percentages produced from materially different rule sets are not directly comparable.** A 100% result from two lenient checks must not be ranked against a 100% result from eight stricter checks as though they represented equivalent coverage.
 - There is no overall or global DQ score.
 
 ## Rule provenance and human reports

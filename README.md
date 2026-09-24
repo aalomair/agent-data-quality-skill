@@ -133,7 +133,17 @@ Only failed explicit/confirmed constraints belong under **Confirmed findings**. 
 
 One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters total including any `…` marker) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
 
-`dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. These scores measure rule applications, not unique bad rows or cells; one value may contribute to multiple checks when multiple rules apply. There is no overall or global DQ score.
+`dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. These are **rule-conformance percentages**: they measure how the supplied rule applications performed, not intrinsic dataset cleanliness or the percentage of the dataset that is clean. There is no overall or global DQ score.
+
+## Human-facing dimension reporting
+
+When summarizing results, use **Completeness rule-conformance**, **Uniqueness rule-conformance**, and **Validity rule-conformance**. Include the exact score plus `evaluated` / `violations`, and include coverage context when practical: the number of checks, distinct columns or scopes, and total evaluated rule applications. Example:
+
+```text
+Validity rule-conformance: 99.98% — 5 checks · 4 columns · 99,101 rule applications
+```
+
+Coverage counts are derived from the emitted checks in the report layer; they do not change the JSON field names or score formula. **Dimension percentages produced from materially different rule sets are not directly comparable.** Do not rank a 100% result from two lenient checks against a 100% result from eight stricter checks as though they represented equivalent coverage.
 
 For the default concise human-facing summary, follow `skills/data-quality/SKILL.md`; raw JSON is machine evidence and should be shown only when requested.
 

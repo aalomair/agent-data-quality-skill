@@ -75,7 +75,7 @@ Rule semantics and evidence rules are in `references/RULES.md`. This copied bund
 6. **Generate the smallest useful YAML rule set.** Include only the checks needed for the objective. Do not silently add broad rules, and do not treat an unconfirmed candidate as an established acceptance rule.
 7. **Run the deterministic engine.** Execute `scripts/dq.py SOURCE --rules RULES.yml` and use its JSON output. The source remains read-only and the engine, not the LLM, performs all rule evaluation, dimension aggregation, and scoring.
 8. **Treat engine results as authoritative.** Preserve the engine's `checks`, `dimensions`, and scores exactly. Use the LLM only to interpret, explain, prioritize findings, state limitations, and suggest next checks or actions.
-9. **Interpret dimension scores correctly.** A dimension score measures rule applications, not unique bad rows or cells. One value can contribute to multiple checks when multiple rules apply, and each such rule application is counted in its corresponding check totals.
+9. **Interpret dimension results as rule-conformance.** A dimension percentage measures the conformance of the supplied rule applications, not intrinsic dataset cleanliness. Include coverage context in human-facing summaries: the number of checks, the number of distinct columns or scopes, and the total evaluated rule applications. A dataset can contain missing values and still have 100% completeness rule-conformance when the supplied rules allow that missingness.
 10. **Never alter the source.** Cleansing, cleaning, repair, and data alteration are permanently out of scope; suggested fixes are explanations only.
 
 ## Human-facing report
@@ -86,12 +86,16 @@ After the deterministic run, produce this concise report by default. Do not dump
    - State the source and selected sheet or table.
    - State rows and columns.
    - State what was assessed and what was not assessed.
-2. **DQ dimension results**
-   - Report `completeness`, `uniqueness`, and `validity` in that order.
+2. **Dimension rule-conformance results**
+   - Report **Completeness rule-conformance**, **Uniqueness rule-conformance**, and **Validity rule-conformance** in that order.
    - Copy each deterministic score and its `evaluated` / `violations` counts exactly.
+   - Preserve the engine formula `score = (evaluated - violations) / evaluated * 100`; do not add weights, grades, labels, or a global score.
+   - Include coverage context when practical: the number of checks, distinct columns or scopes, and total evaluated rule applications. For example: `Validity rule-conformance: 99.98% — 5 checks · 4 columns · 99,101 rule applications`.
+   - Coverage counts are derived from the emitted checks in the report layer; do not add fields to or alter the deterministic JSON contract.
+   - A rule-conformance percentage measures the supplied rule applications, not the percentage of the dataset that is clean. Avoid wording such as “X% of the dataset is clean.”
+   - **Dimension percentages produced from materially different rule sets are not directly comparable.** Do not rank a 100% result from two lenient checks against a 100% result from eight stricter checks as though they represented equivalent coverage.
    - When a score is `null`, say **not assessed**; never substitute zero or invent a score.
    - Never present an overall or global score.
-   - Score percentages measure rule applications, not the percentage of the dataset that is clean. Avoid wording such as “X% of the dataset is clean.”
 3. **Confirmed findings**
    - Include failed explicit/confirmed constraints only.
    - For each, state the rule, column or scope, violations, evaluated count, and bounded row evidence.
@@ -116,7 +120,7 @@ After the deterministic run, produce this concise report by default. Do not dump
 - XLSX formulas are never executed; their cached values may be missing or stale, and the report warns when formulas are present.
 - Sources beyond the documented limits (50 MiB / 200,000 rows) are rejected, never sampled or truncated.
 - Python regular expressions can catastrophically backtrack on some patterns. For untrusted or automated runs, require a host-enforced execution timeout; this helper does not provide a regex timeout.
-- Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). The report has fixed per-dimension scores but no overall or global DQ score. Cleansing, repair, and alteration of source data are permanently out of scope; suggested fixes are explanations only — this skill never alters data.
+- Passing supplied rules does not establish factual accuracy or overall fitness: state what was not assessed (semantic text quality, freshness without an SLA, accuracy without reference data). The report has fixed per-dimension rule-conformance scores but no overall or global DQ score. Cleansing, repair, and alteration of source data are permanently out of scope; suggested fixes are explanations only — this skill never alters data.
 - The helper escaping adversarial cells as data does not prove every host model is immune to prompt injection.
 
 ## Verification
@@ -124,5 +128,7 @@ After the deterministic run, produce this concise report by default. Do not dump
 - The helper printed valid JSON on stdout and the exit code matched the report's `overall.exit_code`.
 - Every executed check carries rule, fixed dimension, scope/column, evaluated count, violation count, and bounded `row_refs`.
 - The report includes deterministic completeness, uniqueness, and validity aggregates; unevaluated checks are excluded and empty dimensions have a `null` score.
+- Human-facing dimension labels use rule-conformance terminology and include evaluated/violations plus coverage context when practical.
+- Reports warn that percentages from materially different rule sets are not directly comparable.
 - Human-facing findings distinguish explicit/confirmed constraints from source-informed and inferred candidates; each candidate states rationale, evidence/source, and uncertainty.
 - Source bytes are unchanged after the run (SQLite is opened with `mode=ro`; a write attempt fails).
