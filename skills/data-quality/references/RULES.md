@@ -25,6 +25,16 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 - Dimension scores measure rule applications, not unique bad rows or cells; one value may contribute to multiple checks when multiple rules apply.
 - There is no overall or global DQ score.
 
+## Rule provenance and human reports
+
+The deterministic engine evaluates the YAML rules without provenance metadata; no provenance syntax is part of the rule file. The host-agent report classifies each rule at preparation time:
+
+- **Explicit constraint (confirmed):** directly required by the user, contract, standard, schema, policy, SLA, or authoritative source.
+- **Source-informed candidate:** strongly suggested by official metadata, but not explicitly established as a requirement. A documented field or value vocabulary does not by itself make a field mandatory.
+- **Inferred candidate:** suggested by the LLM from profiling, observed patterns, context, or likely semantics.
+
+Only failures of explicit/confirmed constraints belong under **Confirmed findings**. Failures from source-informed and inferred candidates belong under **Candidate findings** and must include provenance, rationale, evidence/source, uncertainty, and the deterministic result. Official metadata alone does not promote a candidate to a confirmed business requirement. When the distinction affects interpretation, run confirmed and candidate rule sets separately; preserve each engine result exactly.
+
 ## `dataset.max_duplicate_rows`
 
 - Duplicate rows = **extra exact rows beyond the first occurrence**: `rows − distinct row keys`.

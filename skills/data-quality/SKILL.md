@@ -65,13 +65,18 @@ Rule semantics and evidence rules are in `references/RULES.md`. This copied bund
 
 1. **Inspect/profile first.** Run `scripts/dq.py SOURCE` without `--rules`, then read the profile, warnings, selected sheet/table, row/column counts, and limits. Do not choose rules before this pass.
 2. **Understand the objective and context.** Read the user's question, available schema/column names, and any domain or reference context. Identify what decision the checks are meant to support.
-3. **Separate rule provenance.** Mark each rule as either **explicit/authoritative** (supplied by the user or an authoritative reference) or an **inferred candidate** (suggested by the LLM from the objective, profile, or context).
-4. **State uncertainty.** Never present an inferred candidate as an established fact. Label its assumption, rationale, and uncertainty; keep it separate from authoritative findings and ask for confirmation when that distinction matters.
-5. **Generate the smallest useful YAML rule set.** Include only the checks needed for the objective. Do not silently add broad rules, and do not treat an unconfirmed candidate as an established acceptance rule.
-6. **Run the deterministic engine.** Execute `scripts/dq.py SOURCE --rules RULES.yml` and use its JSON output. The source remains read-only and the engine, not the LLM, performs all rule evaluation, dimension aggregation, and scoring.
-7. **Treat engine results as authoritative.** Preserve the engine's `checks`, `dimensions`, and scores exactly. Use the LLM only to interpret, explain, prioritize findings, state limitations, and suggest next checks or actions.
-8. **Interpret dimension scores correctly.** A dimension score measures rule applications, not unique bad rows or cells. One value can contribute to multiple checks when multiple rules apply, and each such rule application is counted in its corresponding check totals.
-9. **Never alter the source.** Cleansing, cleaning, repair, and data alteration are permanently out of scope; suggested fixes are explanations only.
+3. **Establish rule provenance before writing YAML.** Use three levels:
+   - **Explicit constraint (confirmed):** directly required by the user, contract, standard, schema, policy, SLA, or authoritative source.
+   - **Source-informed candidate:** strongly suggested by official metadata, but not explicitly established as a requirement. A documented field or value vocabulary does not by itself make a field mandatory or a rule authoritative.
+   - **Inferred candidate:** suggested by the LLM from profiling, observed patterns, context, or likely semantics.
+   Only explicit constraints should automatically produce confirmed DQ findings.
+4. **Keep confirmed and candidate rule sets separate when the distinction affects interpretation.** Run explicit/confirmed constraints independently from source-informed and inferred candidates when needed. Do not add provenance fields or new syntax to the YAML rules in this phase; provenance belongs in the host report.
+5. **State candidate uncertainty.** For every source-informed or inferred candidate, record its provenance, rationale, evidence/source, and uncertainty. Never present a candidate as an established business requirement.
+6. **Generate the smallest useful YAML rule set.** Include only the checks needed for the objective. Do not silently add broad rules, and do not treat an unconfirmed candidate as an established acceptance rule.
+7. **Run the deterministic engine.** Execute `scripts/dq.py SOURCE --rules RULES.yml` and use its JSON output. The source remains read-only and the engine, not the LLM, performs all rule evaluation, dimension aggregation, and scoring.
+8. **Treat engine results as authoritative.** Preserve the engine's `checks`, `dimensions`, and scores exactly. Use the LLM only to interpret, explain, prioritize findings, state limitations, and suggest next checks or actions.
+9. **Interpret dimension scores correctly.** A dimension score measures rule applications, not unique bad rows or cells. One value can contribute to multiple checks when multiple rules apply, and each such rule application is counted in its corresponding check totals.
+10. **Never alter the source.** Cleansing, cleaning, repair, and data alteration are permanently out of scope; suggested fixes are explanations only.
 
 ## Human-facing report
 
@@ -88,12 +93,14 @@ After the deterministic run, produce this concise report by default. Do not dump
    - Never present an overall or global score.
    - Score percentages measure rule applications, not the percentage of the dataset that is clean. Avoid wording such as “X% of the dataset is clean.”
 3. **Confirmed findings**
-   - Include failed authoritative or confirmed rules only.
+   - Include failed explicit/confirmed constraints only.
    - For each, state the rule, column or scope, violations, evaluated count, and bounded row evidence.
+   - Do not promote a source-informed or inferred candidate to a confirmed finding merely because it came from official metadata or appears plausible.
    - Prioritize material findings in the presentation without changing engine results or counts.
-4. **Candidate findings / assumptions**
-   - Keep inferred LLM rules and hypotheses in a separate section.
-   - Label assumptions and uncertainty; never present candidates as confirmed business requirements.
+4. **Candidate findings**
+   - Keep failures from **source-informed candidates** and **inferred candidates** separate from confirmed findings.
+   - For each candidate, state its provenance level, rule, column or scope, deterministic result, rationale, evidence/source, uncertainty, and bounded row evidence where available.
+   - Candidate findings are hypotheses for review, not confirmed business requirements.
 5. **Limitations**
    - State relevant checks that were not validated, such as accuracy, semantics, or freshness.
 6. **Suggested next checks/actions**
@@ -102,6 +109,7 @@ After the deterministic run, produce this concise report by default. Do not dump
 
 ## Pitfalls
 
+- An official data dictionary, API schema, or documented vocabulary can support a **source-informed candidate** without establishing a mandatory constraint. Do not call every metadata-derived rule authoritative.
 - `--examples` output contains raw source values and is not anonymized or automatically safe to share.
 - Row references are run-local record positions (1-based; text sources use physical line numbers; JSONL skips blank lines so its positions count records), not permanent row IDs.
 - Exit 0 never proves dataset quality: rules may be absent, or checks may be `not_evaluated` (empty data or no eligible values).
@@ -116,4 +124,5 @@ After the deterministic run, produce this concise report by default. Do not dump
 - The helper printed valid JSON on stdout and the exit code matched the report's `overall.exit_code`.
 - Every executed check carries rule, fixed dimension, scope/column, evaluated count, violation count, and bounded `row_refs`.
 - The report includes deterministic completeness, uniqueness, and validity aggregates; unevaluated checks are excluded and empty dimensions have a `null` score.
+- Human-facing findings distinguish explicit/confirmed constraints from source-informed and inferred candidates; each candidate states rationale, evidence/source, and uncertainty.
 - Source bytes are unchanged after the run (SQLite is opened with `mode=ro`; a write attempt fails).

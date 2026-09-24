@@ -119,6 +119,16 @@ Exit codes: `0` = inspected / no failed rules · `1` = rule violations · `2` = 
 
 Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and one dataset rule, `max_duplicate_rows`. Counting semantics (missing values, missing percentages, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
 
+## Rule provenance in agent reports
+
+The YAML rule syntax intentionally has no provenance fields. Provenance is a host-agent reporting concept, so the deterministic engine and JSON contract remain unchanged. Classify each rule before writing it:
+
+- **Explicit constraint (confirmed):** directly required by the user, contract, standard, schema, policy, SLA, or authoritative source.
+- **Source-informed candidate:** strongly suggested by official metadata, but not explicitly established as a requirement. A documented field or value vocabulary does not by itself make a field mandatory.
+- **Inferred candidate:** suggested by the LLM from profiling, observed patterns, context, or likely semantics.
+
+Only failed explicit/confirmed constraints belong under **Confirmed findings**. Failures from source-informed and inferred candidates belong under **Candidate findings** and must include their provenance, rationale, evidence/source, uncertainty, and deterministic result. Official metadata alone must not promote a candidate to a confirmed business requirement. When the distinction affects interpretation, run confirmed constraints separately from candidate rules.
+
 ## Output contract
 
 One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters total including any `…` marker) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
