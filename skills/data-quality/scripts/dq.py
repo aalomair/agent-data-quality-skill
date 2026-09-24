@@ -45,6 +45,7 @@ SCHEMA_VERSION = "1.0"
 
 # Conservative limits; oversized sources are rejected, never truncated.
 MAX_SOURCE_BYTES = 50 * 1024 * 1024  # 50 MiB
+MAX_RULES_BYTES = 1 * 1024 * 1024  # 1 MiB
 MAX_ROWS = 200_000
 MAX_EVIDENCE_REFS = 10  # row references per check
 MAX_EXAMPLES = 5  # example values per check (--examples cap)
@@ -891,6 +892,15 @@ def load_rules(path: Path, columns: list[str]) -> dict:
     if not path.is_file():
         raise DqError("rules_not_found", f"rules file not found: {path}")
     try:
+        size_bytes = path.stat().st_size
+    except OSError as exc:
+        raise DqError("rules_not_found", f"rules file not found: {path}") from exc
+    if size_bytes > MAX_RULES_BYTES:
+        raise DqError(
+            "invalid_rules",
+            f"rules file exceeds the maximum size of {MAX_RULES_BYTES} bytes",
+        )
+    try:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         raise DqError("decode_error", f"rules file is not valid UTF-8: {exc}")
@@ -1267,11 +1277,11 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
 
         if "allowed" in rule_values:
             allowed = rule_values["allowed"]
+            allowed_keys = {value_key(candidate) for candidate in allowed}
             violating = [
                 position
                 for position in present_positions
-                if not any(scalar_eq(values[position - 1], candidate)
-                           for candidate in allowed)
+                if value_key(values[position - 1]) not in allowed_keys
             ]
             checks.append(
                 _column_check("allowed", name, evaluated, violating, values,

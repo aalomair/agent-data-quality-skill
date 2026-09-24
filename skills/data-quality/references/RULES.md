@@ -97,6 +97,7 @@ Boolean. `true` evaluates all rows and reports missing values as violations; `fa
 
 ## Evidence and limits
 
+- Rules files above **1 MiB (1,048,576 bytes)** are rejected as `invalid_rules` (exit 2) before YAML parsing; rules are never truncated or sampled.
 - `row_refs`: up to **10** run-local 1-based positions within the inspected records. For TXT/Markdown sources these are the physical line numbers; JSONL skips blank lines, so its positions count records rather than physical lines; SQLite positions are scan offsets, **not row IDs**.
 - `examples`: opt-in via `--examples N` (default 0; a negative value is an error, values above 5 are capped at 5). Up to 5 distinct violating values per check, each limited to 100 characters total, including any trailing `…` marker. Missing-value violations carry no examples.
 - Statuses: `passed`, `failed`, `not_evaluated`. Overall status: `error` (exit 2), `failed` (exit 1), `passed` (rules executed and at least one passed, none failed), `inspected` (no rules, or no check produced a passing verdict — e.g. empty data).

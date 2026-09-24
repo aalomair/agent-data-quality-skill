@@ -641,6 +641,29 @@ def test_allowed_has_no_implicit_string_number_conversion(basic_csv, tmp_path):
     assert c2["violations"] == 3  # strings never match YAML numbers
 
 
+def test_large_allowed_list_preserves_scalar_matching(tmp_path):
+    records = [
+        {"value": 0},
+        {"value": 1234},
+        {"value": 1.0},
+        {"value": 1.5},
+        {"value": True},
+        {"value": "1234"},
+    ]
+    src = write(tmp_path / "large-allowed.json", json.dumps(records))
+    allowed_lines = "\n".join(f"      - {value}" for value in range(5000))
+    rules = write(
+        tmp_path / "large-allowed.yml",
+        f"columns:\n  value:\n    allowed:\n{allowed_lines}\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    allowed = check(payload, "allowed", "value")
+    assert (allowed["evaluated"], allowed["violations"]) == (6, 3)
+    assert allowed["row_refs"] == [4, 5, 6]
+
+
 def test_regex_is_full_string_and_requires_strings(tmp_path):
     src = write(tmp_path / "rx.csv", "v\nabc\nab\n")
     rules = write(tmp_path / "rx.yml", "columns:\n  v:\n    regex: 'ab'\n")
@@ -1384,6 +1407,26 @@ def test_size_limit_rejects_oversized_source(tmp_path, dq):
         handle.write(b"\n")
     payload, _ = run_json([src], expect=2)
     assert "size limit" in payload["errors"][0]["message"].lower()
+
+
+def test_oversized_rules_file_is_rejected_before_yaml_parsing(tmp_path, dq):
+    src = write(tmp_path / "small.csv", "value\n1\n")
+    rules = tmp_path / "oversized.yml"
+    write(rules, b"[unterminated\n" + b" " * dq.MAX_RULES_BYTES)
+
+    payload, _ = run_json([src, "--rules", rules], expect=2)
+
+    assert payload["errors"][0]["code"] == "invalid_rules"
+    assert "rules file exceeds" in payload["errors"][0]["message"].lower()
+
+
+def test_ordinary_rules_file_is_unaffected_by_size_limit(tmp_path):
+    src = write(tmp_path / "small.csv", "value\n1\n")
+    rules = write(tmp_path / "small.yml", "columns:\n  value:\n    allowed: ['1']\n")
+
+    payload, _ = run_json([src, "--rules", rules], expect=0)
+
+    assert check(payload, "allowed", "value")["status"] == "passed"
 
 
 def test_empty_csv_is_error(tmp_path):
