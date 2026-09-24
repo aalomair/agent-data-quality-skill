@@ -41,11 +41,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "data-quality" / "scripts" / "dq.py"
 
 INJECT_PER_TYPE = 10
+MAX_EVIDENCE_REFS = 10
 MISSING_VALUE = ""                     # empty cell: missing for the skill
 INVALID_NUMBER = "not-a-number"        # non-missing, non-numeric
 INVALID_CATEGORY = "not-a-category"    # non-missing, outside the allowed set
@@ -89,6 +91,19 @@ def parse_number(value: str) -> float | None:
 def duplicate_extras(rows: list[list[str]]) -> int:
     """Return exact duplicate rows beyond the first occurrence of each key."""
     return len(rows) - len({tuple(row) for row in rows})
+
+
+def duplicate_violation_positions(rows: list[list[str]], allowance: int) -> list[int]:
+    """Return 1-based duplicate positions beyond the configured allowance."""
+    seen: set[tuple[str, ...]] = set()
+    duplicates: list[int] = []
+    for position, row in enumerate(rows, start=1):
+        key = tuple(row)
+        if key in seen:
+            duplicates.append(position)
+        else:
+            seen.add(key)
+    return duplicates[allowance:]
 
 
 def pick_positions(row_count: int, count: int, taken: set[int]) -> list[int]:
@@ -164,11 +179,119 @@ def validate_cli_result(
     return problems
 
 
+def check_key(check: dict) -> str:
+    return f"{check['rule']}:{check.get('column') or 'dataset'}"
+
+
+def expected_check(
+    dimension: str,
+    evaluated: int,
+    violating_positions: list[int],
+) -> dict:
+    return {
+        "dimension": dimension,
+        "evaluated": evaluated,
+        "violations": len(violating_positions),
+        "status": (
+            "not_evaluated"
+            if evaluated == 0
+            else ("failed" if violating_positions else "passed")
+        ),
+        "row_refs": violating_positions[:MAX_EVIDENCE_REFS],
+        "row_refs_truncated": len(violating_positions) > MAX_EVIDENCE_REFS,
+    }
+
+
+def expected_dimensions(expected_checks: dict[str, dict]) -> dict[str, dict[str, Any]]:
+    dimensions: dict[str, dict[str, Any]] = {
+        name: {"evaluated": 0, "violations": 0}
+        for name in ("completeness", "uniqueness", "validity")
+    }
+    for expectation in expected_checks.values():
+        if expectation["status"] == "not_evaluated":
+            continue
+        dimension = dimensions[expectation["dimension"]]
+        dimension["evaluated"] += expectation["evaluated"]
+        dimension["violations"] += expectation["violations"]
+    for dimension in dimensions.values():
+        evaluated = dimension["evaluated"]
+        violations = dimension["violations"]
+        dimension["score"] = (
+            None
+            if evaluated == 0
+            else round((evaluated - violations) / evaluated * 100, 2)
+        )
+    return dimensions
+
+
+def validate_check_results(
+    payload: dict,
+    expected: dict[str, dict],
+) -> list[str]:
+    """Validate deterministic check fields and dimension aggregation."""
+    problems: list[str] = []
+    actual_checks = payload.get("checks")
+    if not isinstance(actual_checks, list):
+        return ["payload checks is missing or is not a list"]
+
+    actual_by_key: dict[str, dict] = {}
+    for check in actual_checks:
+        if not isinstance(check, dict):
+            problems.append("a report check is not an object")
+            continue
+        try:
+            key = check_key(check)
+        except KeyError as exc:
+            problems.append(f"report check is missing {exc.args[0]!r}")
+            continue
+        if key in actual_by_key:
+            problems.append(f"duplicate check in report: {key}")
+        actual_by_key[key] = check
+
+    for key in sorted(set(expected) - set(actual_by_key)):
+        problems.append(f"{key}: check missing from the report")
+    for key in sorted(set(actual_by_key) - set(expected)):
+        problems.append(f"{key}: unexpected check in the report")
+
+    fields = (
+        "dimension",
+        "evaluated",
+        "violations",
+        "status",
+        "row_refs",
+        "row_refs_truncated",
+    )
+    for key, expectation in expected.items():
+        actual = actual_by_key.get(key)
+        if actual is None:
+            continue
+        for field in fields:
+            if actual.get(field) != expectation[field]:
+                problems.append(
+                    f"{key}: {field} {actual.get(field)!r}, "
+                    f"expected {expectation[field]!r}"
+                )
+        refs = actual.get("row_refs")
+        if isinstance(refs, list) and len(refs) > MAX_EVIDENCE_REFS:
+            problems.append(
+                f"{key}: row_refs contains {len(refs)} entries; "
+                f"maximum is {MAX_EVIDENCE_REFS}"
+            )
+
+    actual_dimensions = payload.get("dimensions")
+    expected_dimension_values = expected_dimensions(expected)
+    if actual_dimensions != expected_dimension_values:
+        problems.append(
+            f"dimensions {actual_dimensions!r}, expected {expected_dimension_values!r}"
+        )
+    return problems
+
+
 def detected_violations(payload: dict) -> dict[str, int]:
     """Failing checks as {rule:column-or-dataset -> violation count}."""
     detected: dict[str, int] = {}
     for check in payload["checks"]:
-        key = f"{check['rule']}:{check.get('column') or 'dataset'}"
+        key = check_key(check)
         detected[key] = check["violations"] if check["status"] == "failed" else 0
     return detected
 
@@ -236,6 +359,37 @@ def run_public(verbose: bool) -> bool:
         "allowed:workclass": INJECT_PER_TYPE,
         "max_duplicate_rows:dataset": INJECT_PER_TYPE,
     }
+    duplicate_allowance = duplicate_extras(rows)
+    age_present = [
+        position + 1
+        for position, row in enumerate(corrupted)
+        if not is_missing(row[index["age"]])
+    ]
+    workclass_present = [
+        position + 1
+        for position, row in enumerate(corrupted)
+        if not is_missing(row[index["workclass"]])
+    ]
+    blank_age_refs = [position + 1 for position in blank_age]
+    bad_age_refs = [position + 1 for position in bad_age]
+    bad_workclass_refs = [position + 1 for position in bad_workclass]
+    duplicate_refs = duplicate_violation_positions(corrupted, duplicate_allowance)
+    expected_checks = {
+        "max_duplicate_rows:dataset": expected_check(
+            "uniqueness", len(corrupted), duplicate_refs
+        ),
+        "required:age": expected_check(
+            "completeness", len(corrupted), blank_age_refs
+        ),
+        "max_null_pct:age": expected_check(
+            "completeness", len(corrupted), blank_age_refs
+        ),
+        "type:age": expected_check("validity", len(age_present), bad_age_refs),
+        "min:age": expected_check("validity", len(age_present), bad_age_refs),
+        "allowed:workclass": expected_check(
+            "validity", len(workclass_present), bad_workclass_refs
+        ),
+    }
 
     with tempfile.TemporaryDirectory(prefix="dq-bench-public-") as tmp:
         corrupted_path = Path(tmp) / "adult-corrupted.csv"
@@ -256,6 +410,7 @@ def run_public(verbose: bool) -> bool:
             and isinstance(payload.get("checks"), list):
         injected, observed, unexpected, problems_checks = compare(expected, payload)
         problems += problems_checks
+        problems += validate_check_results(payload, expected_checks)
     report("UCI Adult", None, injected, observed, unexpected, unchanged)
     return finish(problems, unchanged, verbose, payload, expected)
 
@@ -374,6 +529,9 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
     taken: set[int] = set()
     corrupted = [list(row) for row in rows]
     index = {name: position for position, name in enumerate(header)}
+    required_positions: list[int] = []
+    numeric_positions: list[int] = []
+    category_positions: list[int] = []
 
     if rules["required"]:
         target = index[rules["required"]]
@@ -400,9 +558,43 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
     copied = pick_positions(len(rows), INJECT_PER_TYPE, taken)
     corrupted += [list(rows[position]) for position in copied]
     rules["max_duplicate_rows"] = duplicate_allowance
-    expected["max_duplicate_rows:dataset"] = max(
-        0, duplicate_extras(corrupted) - duplicate_allowance
-    )
+    duplicate_refs = duplicate_violation_positions(corrupted, duplicate_allowance)
+    expected["max_duplicate_rows:dataset"] = len(duplicate_refs)
+
+    expected_checks = {
+        "max_duplicate_rows:dataset": expected_check(
+            "uniqueness", len(corrupted), duplicate_refs
+        )
+    }
+    if rules["required"]:
+        required_refs = [position + 1 for position in required_positions]
+        expected_checks[f"required:{rules['required']}"] = expected_check(
+            "completeness", len(corrupted), required_refs
+        )
+        expected_checks[f"max_null_pct:{rules['required']}"] = expected_check(
+            "completeness", len(corrupted), required_refs
+        )
+    if rules["numeric"]:
+        numeric_target = index[rules["numeric"]]
+        numeric_evaluated = sum(
+            not is_missing(row[numeric_target]) for row in corrupted
+        )
+        numeric_refs = [position + 1 for position in numeric_positions]
+        expected_checks[f"type:{rules['numeric']}"] = expected_check(
+            "validity", numeric_evaluated, numeric_refs
+        )
+        expected_checks[f"min:{rules['numeric']}"] = expected_check(
+            "validity", numeric_evaluated, numeric_refs
+        )
+    if rules["category"]:
+        category_target = index[rules["category"]]
+        category_evaluated = sum(
+            not is_missing(row[category_target]) for row in corrupted
+        )
+        category_refs = [position + 1 for position in category_positions]
+        expected_checks[f"allowed:{rules['category']}"] = expected_check(
+            "validity", category_evaluated, category_refs
+        )
 
     with tempfile.TemporaryDirectory(prefix="dq-bench-erpnext-") as tmp:
         corrupted_path = Path(tmp) / "erpnext-corrupted.csv"
@@ -430,6 +622,7 @@ def run_erpnext(path: Path, verbose: bool) -> bool:
             and isinstance(payload.get("checks"), list):
         _, observed, unexpected, problems_checks = compare(expected, payload)
         problems += problems_checks
+        problems += validate_check_results(payload, expected_checks)
 
     report("ERPNext", len(rows), injected, observed, unexpected, unchanged)
     for item in skipped:

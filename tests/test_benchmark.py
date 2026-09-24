@@ -89,3 +89,50 @@ def test_benchmark_validates_cli_exit_status_and_errors(benchmark):
     assert any("payload overall.exit_code" in problem for problem in problems)
     assert any("payload status" in problem for problem in problems)
     assert any("payload errors" in problem for problem in problems)
+
+
+def test_benchmark_rejects_allowed_duplicate_evidence(benchmark):
+    expected = {
+        "max_duplicate_rows:dataset": {
+            "dimension": "uniqueness",
+            "evaluated": 15,
+            "violations": 12,
+            "status": "failed",
+            "row_refs": list(range(3, 13)),
+            "row_refs_truncated": True,
+        }
+    }
+    check = {
+        "rule": "max_duplicate_rows",
+        "dimension": "uniqueness",
+        "scope": "dataset",
+        "column": None,
+        "evaluated": 15,
+        "violations": 12,
+        "status": "failed",
+        "row_refs": list(range(3, 13)),
+        "row_refs_truncated": True,
+    }
+    payload = {
+        "checks": [check],
+        "dimensions": {
+            "completeness": {"score": None, "evaluated": 0, "violations": 0},
+            "uniqueness": {"score": 20.0, "evaluated": 15, "violations": 12},
+            "validity": {"score": None, "evaluated": 0, "violations": 0},
+        },
+    }
+
+    assert benchmark.validate_check_results(payload, expected) == []
+
+    check["row_refs"] = [2, *range(3, 12)]
+    problems = benchmark.validate_check_results(payload, expected)
+    assert any("row_refs" in problem for problem in problems)
+
+
+def test_public_benchmark_validates_structured_report(benchmark, capsys):
+    assert benchmark.run_public(verbose=False) is True
+    output = capsys.readouterr().out
+    assert "Expected detections: 60" in output
+    assert "Detected: 60" in output
+    assert "Unexpected: 0" in output
+    assert "Source unchanged: PASS" in output
