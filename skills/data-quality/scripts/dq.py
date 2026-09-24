@@ -1131,7 +1131,8 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
                 duplicates.append(position)
             else:
                 seen.add(key)
-        violations = max(0, len(duplicates) - max_allowed) if total else 0
+        violating_duplicates = duplicates[max_allowed:]
+        violations = len(violating_duplicates) if total else 0
         checks.append(
             {
                 "rule": "max_duplicate_rows",
@@ -1142,9 +1143,11 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
                 "violations": violations,
                 "status": "not_evaluated" if total == 0 else
                           ("failed" if violations else "passed"),
-                "row_refs": duplicates[:MAX_EVIDENCE_REFS] if violations else [],
+                "row_refs": (
+                    violating_duplicates[:MAX_EVIDENCE_REFS] if violations else []
+                ),
                 "row_refs_truncated": bool(violations)
-                and len(duplicates) > MAX_EVIDENCE_REFS,
+                and len(violating_duplicates) > MAX_EVIDENCE_REFS,
                 "details": {
                     "duplicate_rows": len(duplicates),
                     "max_allowed": max_allowed,

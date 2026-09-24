@@ -247,6 +247,68 @@ def test_rules_fail_with_expected_counts_and_refs(basic_csv, basic_rules):
     assert payload["selection"]["rules"]["path"].endswith("rules.yml")
 
 
+@pytest.mark.parametrize(
+    ("max_allowed", "expected_violations", "expected_refs", "expected_status"),
+    [
+        (0, 3, [2, 3, 5], "failed"),
+        (1, 2, [3, 5], "failed"),
+        (3, 0, [], "passed"),
+        (4, 0, [], "passed"),
+    ],
+)
+def test_max_duplicate_rows_evidence_respects_allowance(
+    tmp_path, max_allowed, expected_violations, expected_refs, expected_status
+):
+    src = write(
+        tmp_path / "duplicates.csv",
+        "id,value\nA,1\nA,1\nA,1\nB,2\nB,2\n",
+    )
+    rules = write(
+        tmp_path / "duplicates.yml",
+        f"dataset:\n  max_duplicate_rows: {max_allowed}\n",
+    )
+
+    payload, _ = run_json(
+        [src, "--rules", rules], expect=1 if expected_violations else 0
+    )
+
+    duplicate_check = check(payload, "max_duplicate_rows")
+    assert payload["profile"]["duplicate_rows"] == 3
+    assert duplicate_check["violations"] == expected_violations
+    assert duplicate_check["status"] == expected_status
+    assert duplicate_check["row_refs"] == expected_refs
+    assert duplicate_check["row_refs_truncated"] is False
+    assert duplicate_check["details"] == {
+        "duplicate_rows": 3,
+        "max_allowed": max_allowed,
+    }
+    assert len(duplicate_check["row_refs"]) == duplicate_check["violations"]
+
+
+def test_max_duplicate_rows_evidence_truncates_only_violating_duplicates(
+    tmp_path, dq
+):
+    src = write(tmp_path / "many-duplicates.csv", "id,value\n" + "A,1\n" * 16)
+    rules = write(
+        tmp_path / "many-duplicates.yml",
+        "dataset:\n  max_duplicate_rows: 3\n",
+    )
+
+    payload, _ = run_json([src, "--rules", rules], expect=1)
+
+    duplicate_check = check(payload, "max_duplicate_rows")
+    assert payload["profile"]["duplicate_rows"] == 15
+    assert duplicate_check["violations"] == 12
+    assert duplicate_check["row_refs"] == list(range(5, 15))
+    assert len(duplicate_check["row_refs"]) == dq.MAX_EVIDENCE_REFS
+    assert duplicate_check["row_refs_truncated"] is True
+    assert duplicate_check["details"] == {
+        "duplicate_rows": 15,
+        "max_allowed": 3,
+    }
+    assert all(position > 4 for position in duplicate_check["row_refs"])
+
+
 def test_every_rule_check_has_its_deterministic_dimension(tmp_path):
     src = write(
         tmp_path / "dimensions.csv",

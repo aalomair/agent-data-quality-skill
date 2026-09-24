@@ -29,8 +29,9 @@ Reference for how `scripts/dq.py` evaluates data and rules. Every count is deter
 
 - Duplicate rows = **extra exact rows beyond the first occurrence**: `rows − distinct row keys`.
 - Row equality uses preserved values: strings exact and case-sensitive; numbers compare numerically (`1` equals `1.0`); booleans are distinct from numbers; all nulls share one canonical representation (`None`/`NaN` compare equal).
-- `violations` = duplicate rows **beyond the allowance**: `max(0, duplicates − max_duplicate_rows)`. With `max_duplicate_rows: 0`, every duplicate row counts.
-- `row_refs` lists the positions of the extra duplicate rows (bounded, see Evidence).
+- `details.duplicate_rows` (and `profile.duplicate_rows`) = the total number of duplicate extras, including rows within the allowance.
+- `violations` = duplicate extras **beyond the allowance**: `max(0, duplicates − max_duplicate_rows)`. With `max_duplicate_rows: 0`, every duplicate row counts.
+- `row_refs` lists only the positions of duplicate extras **beyond the allowance**, bounded by the evidence limit; allowed duplicate extras are excluded. `row_refs_truncated` applies only to those violating duplicate positions.
 
 ## Column rules
 
