@@ -1,6 +1,8 @@
 # agent-data-quality-skill
 
-**v0.3.0** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
+**v0.3.0 (unreleased)** — a small, portable [Agent Skill](https://agentskills.io/specification) for deterministic, **read-only** data-quality profiling and rule checking.
+
+This README describes the development snapshot on `main`. The latest published release is [v0.2.1](https://github.com/aalomair/agent-data-quality-skill/releases/tag/v0.2.1); its feature set does not include the composite-key and conditional-required checks below. A version string on `main` is not a published release.
 
 The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective and writes the report; Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. Source data is permanently read-only: the helper makes **no model calls, no network access, and no writes** to inspected sources. Hermes has been tested end-to-end with this skill; Codex and Claude Code are format-compatible, but are not harness-tested in this repository.
 
@@ -9,15 +11,16 @@ The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host)
 ```text
 README.md
 LICENSE                        MIT
-.github/workflows/ci.yml       one CI test job
+.github/workflows/ci.yml       tests + full-history secret scan
 skills/data-quality/           the portable skill bundle
   SKILL.md                     skill instructions + frontmatter
+  LICENSE                      MIT notice retained in copy-only installs
   scripts/dq.py                the single CLI helper
   scripts/requirements.txt     runtime dependencies
   references/RULES.md          rule semantics, evidence rules, read-only guarantees
 tests/test_dq.py               pytest suite (CLI-level + unit tests)
 benchmark/run.py               defect-injection benchmark (UCI Adult + ERPNext)
-benchmark/public/              UCI Adult fixture + benchmark rules
+benchmark/public/              UCI Adult fixture (CC BY 4.0), notice + rules
 benchmark/private/             local-only datasets (gitignored)
 ```
 
@@ -45,7 +48,7 @@ python -m pip install 'pyarrow>=15'   # optional, Parquet only
 python -m pip install pytest          # development only
 ```
 
-Installing into a host: copy `skills/data-quality/` into that host's skills directory (for a Hermes profile: `<hermes-home>/skills/`) or point the host at the directory per its own docs. The bundle is self-contained — it never depends on this repository's root.
+Installing into a host: copy the entire `skills/data-quality/` directory, including its `LICENSE`, into that host's skills directory (for a Hermes profile: `<hermes-home>/skills/`) or point the host at the directory per its own docs. The bundle is self-contained — it never depends on this repository's root.
 
 ## Quick start (verified examples)
 
@@ -158,9 +161,9 @@ Coverage counts are derived from the emitted checks in the report layer; they do
 
 For the default concise human-facing summary, follow `skills/data-quality/SKILL.md`; raw JSON is machine evidence and should be shown only when requested.
 
-## v0.3.0 release notes
+## v0.3.0 changes (unreleased)
 
-This release extends deterministic dataset-rule coverage and hardens rule validation without changing the read-only architecture:
+The development snapshot extends deterministic dataset-rule coverage and hardens rule validation without changing the read-only architecture:
 
 - Duplicate-row evidence now lists only duplicate extras beyond `max_duplicate_rows`; total duplicate counts and violation semantics are preserved.
 - Rule provenance and dimension percentages are documented as host-agent reporting guidance and rule-conformance measurements.
@@ -168,6 +171,7 @@ This release extends deterministic dataset-rule coverage and hardens rule valida
 - The benchmark validates detailed checks, evidence, statuses, exit codes, structured errors, and source integrity.
 - `dataset.unique_together` supports one or more composite groups, rejects logically duplicate groups regardless of column order, and preserves configured column order in emitted evidence.
 - `dataset.conditional_required` adds exact scalar cross-field requirements; missing trigger values and semantically duplicate entries are rejected.
+- Publication safeguards preserve the standalone bundle's MIT notice, document the Adult dataset's separate CC BY 4.0 license, ignore local environment/report files, and run a checksum-verified full-history secret scan in CI.
 
 ## v0.2.1 release notes
 
@@ -206,14 +210,15 @@ This release candidate hardens correctness and documentation without adding capa
 - No overall or global DQ score; exit 0 alone never proves dataset quality.
 - Escaping adversarial cells as data does not make every host model immune to prompt injection.
 
-## Verification status (as of 2026-09-25)
+## Verification status (as of 2026-10-15)
 
 Environment: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1, pyarrow 25.0.1.
 
-- **Local validation** — **176 passed** on commit `d9142b2`.
-- **GitHub Actions** — CI completed successfully on commit `d9142b2` (run `36070396641`).
-- **UCI Adult benchmark** — **60/60**, 0 unexpected, source unchanged.
-- **Release-preparation gates** — `compileall` and `git diff --check` passed.
+- **Local validation** — **190 passed** after publication hardening: the existing 176 tests plus 14 publication-safeguard cases.
+- **Previously completed GitHub Actions evidence** — the implementation snapshot `af8e06f` passed [run `36073265098`](https://github.com/aalomair/agent-data-quality-skill/actions/runs/36073265098). For this hardening revision, check its exact commit in the [CI runs](https://github.com/aalomair/agent-data-quality-skill/actions/workflows/ci.yml); the older run does not verify a newer commit.
+- **UCI Adult benchmark** — **60/60** expected rule-violation detections, 0 unexpected, source unchanged. These include overlapping rule checks, not 60 independent naturally occurring defects; see the [benchmark notice](benchmark/public/README.md).
+- **Local secret-scan workflow** — the checksum-verified scanner's complete-history command passed; staged publication files are also scanned before pushing.
+
 
 ## Development
 
@@ -225,7 +230,9 @@ python -m pytest tests/ -q
 
 If `python -m venv` produces an environment without pip (some distro builds omit `ensurepip`), create it with `uv venv` and install with `uv pip install` — the dependency set is identical.
 
-CI (`.github/workflows/ci.yml`) runs the same suite in one job on Python 3.14; the latest recorded GitHub Actions result is listed above. The same dependency set and test command were reproduced locally in a fresh venv.
+CI (`.github/workflows/ci.yml`) runs the same suite on Python 3.14 and a separate full-history Gitleaks scan. Jobs use read-only repository permissions, checkout without persisted credentials, and immutable action SHAs; the scanner binary is version-pinned and SHA-256-verified before execution. Runtime dependency ranges remain flexible rather than fully locked. The dated verification evidence above distinguishes previously completed runs from the current checkout.
+
+Keep credentials in ignored `.env`/`.env.*` files, and put generated reports in the ignored `reports/` directory. Only sanitized placeholders belong in a tracked `.env.example`. Ignore rules do not remove already tracked secrets; inspect staged files and run the secret scan before pushing.
 
 ## Roadmap (deferred by design)
 
@@ -243,4 +250,6 @@ No extension roadmap is promised for those boundaries; future work, if any, rema
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Project code and documentation are MIT-licensed — see [LICENSE](LICENSE). The portable skill includes the same [MIT notice](skills/data-quality/LICENSE) so directory-only installs retain it.
+
+The third-party `benchmark/public/adult.csv` dataset is **CC BY 4.0**, not MIT. See [dataset attribution, license links, transformations, and checksums](benchmark/public/README.md). The benchmark rules and program remain MIT-licensed.

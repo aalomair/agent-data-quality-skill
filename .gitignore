@@ -7,3 +7,9 @@ venv/
 *.egg-info/
 .DS_Store
 benchmark/private/
+
+# Local credentials and generated reports must never be published.
+.env
+.env.*
+!.env.example
+/reports/
