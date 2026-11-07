@@ -18,7 +18,11 @@ curl -fsSL -o data-quality-skill.zip \
 # https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.3.0/data-quality-skill.zip
 ```
 
-The zip unpacks to a single top-level `data-quality/` directory — that directory is the skill. Keep it intact, including its `LICENSE`. Each release also attaches a `SHA256SUMS` file:
+```bash
+unzip -q data-quality-skill.zip     # creates ./data-quality/
+```
+
+The zip unpacks to a single top-level `data-quality/` directory — that directory is the skill. Keep it intact, including its `LICENSE`. Each release also attaches a `SHA256SUMS` file, which verifies the downloaded zip:
 
 ```bash
 curl -fsSL -O https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/SHA256SUMS
