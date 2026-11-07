@@ -1,10 +1,16 @@
 # agent-data-quality-skill
 
-Deterministic, **read-only** data-quality evidence for AI agents. This repository ships one portable [Agent Skill](https://agentskills.io/specification) that an agent can download, drop into its skills directory, and run with the Python it already has: profile a local dataset and check it against a small YAML rule set, with every number computed by Python rather than by the model.
+An [Agent Skill](https://agentskills.io/specification) that lets an AI agent check the quality of a local dataset without guessing at the numbers.
 
 **Version 0.3.0** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
 
-The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host) interprets the objective, chooses the rules, and writes the report. Python (`skills/data-quality/scripts/dq.py`) reads the local data and computes every metric and check. The helper makes **no model calls, no network access, and no writes** to inspected sources. Hermes is the only host harness-tested end to end in this repository; Codex and Claude Code follow the same open skill format but have not been harness-tested here.
+## Why this exists
+
+Ask a language model how many rows in a file are missing an email address and it will often give you a confident number that it never actually counted. That is fine for a chat, and not fine for a data-quality report someone is going to act on.
+
+This skill splits the work. The agent (Hermes, Claude Code, Codex, or any host that reads Agent Skills) does what models are good at: understanding what you're trying to check, proposing rules, and writing up the findings. A small Python script, `skills/data-quality/scripts/dq.py`, does the part that has to be exact: reading the file, profiling every column, and evaluating each rule. The script makes no model calls, opens no network connections, and never writes to the data it inspects.
+
+I've tested it end to end with Hermes. Claude Code and Codex use the same skill format, but I haven't run them through the same harness yet.
 
 ## Install for agents
 
@@ -14,7 +20,7 @@ The host LLM (Hermes, Claude Code, Codex, or any Agent Skills–compatible host)
 curl -fsSL -o data-quality-skill.zip \
   https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip
 
-# pinned to this version instead of latest:
+# or pin this exact version:
 # https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.3.0/data-quality-skill.zip
 ```
 
@@ -22,71 +28,69 @@ curl -fsSL -o data-quality-skill.zip \
 unzip -q data-quality-skill.zip     # creates ./data-quality/
 ```
 
-The zip unpacks to a single top-level `data-quality/` directory — that directory is the skill. Keep it intact, including its `LICENSE`. Each release also attaches a `SHA256SUMS` file, which verifies the downloaded zip:
+The zip contains one folder, `data-quality/`, and that folder is the skill. Keep it intact, `LICENSE` included. Every release also ships a `SHA256SUMS` file so you can check the download:
 
 ```bash
 curl -fsSL -O https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
 
-### 2. Put it in the host's skills directory
+### 2. Put it where your agent looks for skills
 
 | Host | Location |
 |---|---|
-| Hermes | `<hermes-home>/skills/data-quality/` (the only harness-tested host here) |
-| Claude Code | `~/.claude/skills/data-quality/` (personal) or `.claude/skills/data-quality/` (project) — per the [Claude Code skills docs](https://code.claude.com/docs/en/skills#where-skills-live) |
-| Codex | `$HOME/.agents/skills/data-quality/` (user) or `.agents/skills/data-quality/` (repository) — per the [Codex skills docs](https://developers.openai.com/codex/skills) |
-| Any other Agent Skills host | that host's skills directory, per its docs |
+| Hermes | `<hermes-home>/skills/data-quality/` (the host I've tested) |
+| Claude Code | `~/.claude/skills/data-quality/` (personal) or `.claude/skills/data-quality/` (project), per the [Claude Code skills docs](https://code.claude.com/docs/en/skills#where-skills-live) |
+| Codex | `$HOME/.agents/skills/data-quality/` (user) or `.agents/skills/data-quality/` (repository), per the [Codex skills docs](https://developers.openai.com/codex/skills) |
+| Anything else | wherever that host keeps skills |
 
-Alternatively, keep the directory anywhere and resolve `scripts/dq.py` relative to it; nothing requires the repository checkout.
+You can also leave the folder anywhere and call `scripts/dq.py` relative to it. Nothing depends on having this repository checked out.
 
-### 3. Install the dependencies yourself, if you decide to
+### 3. Dependencies (your call)
 
-The skill **never installs packages**. The installing agent or the user decides whether and where to install these — an existing environment or a fresh virtual environment — following the host's and the user's policy.
+The skill will never install packages on its own. You, or the agent installing it, decide whether to install them and where, whether that's an existing environment or a fresh virtual environment.
 
 - Python 3.10–3.14.
-- `pandas>=2.2,<4` — required on every run.
-- `PyYAML>=6.0,<7` — required on every run (import name `yaml`).
-- `openpyxl>=3.1,<4` — only for `.xlsx` sources.
-- `pyarrow>=15` — optional, only for `.parquet` sources.
+- `pandas>=2.2,<4`, needed on every run.
+- `PyYAML>=6.0,<7`, needed on every run (imported as `yaml`).
+- `openpyxl>=3.1,<4`, only for `.xlsx` files.
+- `pyarrow>=15`, optional, only for `.parquet` files.
 
-These ranges are mirrored from `skills/data-quality/scripts/requirements.txt`, which is authoritative; a test keeps the docs in sync with it. Check what is already available:
+The source of truth for these ranges is `skills/data-quality/scripts/requirements.txt`, and a test fails if this list drifts from it. To see what you already have:
 
 ```bash
 python -c "import pandas, yaml"
 ```
 
-Example install, into the environment you choose:
+To install into whichever environment you picked:
 
 ```bash
-python -m venv .venv && . .venv/bin/activate             # optional; use an existing env instead if you prefer
+python -m venv .venv && . .venv/bin/activate             # optional; an existing env works too
 python -m pip install -r <skill-directory>/scripts/requirements.txt
 python -m pip install 'pyarrow>=15'                      # optional, Parquet only
 ```
 
-If `pandas` or `yaml` is missing, the helper still prints one valid JSON error document with `errors[0].code == "missing_dependency"` and exits 2; no traceback reaches stdout. The message names the missing module and the requirements install command. Missing `openpyxl` or `pyarrow` behaves the same way for those source formats.
+If `pandas` or `yaml` is missing, the script doesn't crash with a traceback. It prints a normal JSON report with `errors[0].code == "missing_dependency"`, names the missing module and the install command, and exits with code 2. A missing `openpyxl` or `pyarrow` is handled the same way for those formats.
 
-### 4. Verify the install
+### 4. Check it works
 
 ```bash
 python <skill-directory>/scripts/dq.py --help
 python <skill-directory>/scripts/dq.py <some.csv>
 ```
 
-### Git alternative
-
-For an agent that prefers git over release downloads:
+### Or use git
 
 ```bash
 git clone --depth 1 https://github.com/aalomair/agent-data-quality-skill.git
 cp -R agent-data-quality-skill/skills/data-quality <host-skills-directory>/data-quality
 ```
 
-## Quick start — the agent flow
+## A quick walkthrough
 
-The typical request is: *"download the data-quality skill, use it on this dataset, and put the results in a dashboard."* The skill's job is the deterministic evidence; the host agent builds the dashboard from the saved JSON.
+A typical request looks like: *"get the data-quality skill, run it on this file, and give me a dashboard."* The skill produces the evidence. Building the dashboard is the agent's job, using the JSON the skill saved.
 
-**1. Create a sample dataset and a rules file** (or use the user's own file):
+**1. A small dataset and a rules file** (or use your own):
 
 ```bash
 printf 'id,name,age\n00123,Ahmed,30\n00456,,25\n00789,NA,abc\n00012,Sara,\n' > customers.csv
@@ -105,13 +109,13 @@ columns:
 YAML
 ```
 
-**2. Profile first, and save the JSON to a new file** — never onto the source or rules file:
+**2. Profile it first, and save the output to a new file.** Never redirect onto the source or the rules file.
 
 ```bash
 python <skill-directory>/scripts/dq.py customers.csv > profile.json
 ```
 
-Exit 0, status `inspected`, no rules applied:
+This exits 0 with status `inspected`, since no rules were applied yet:
 
 ```json
 {"schema_version":"1.0","source":{"path":"customers.csv","format":"csv","size_bytes":62},
@@ -128,15 +132,15 @@ Exit 0, status `inspected`, no rules applied:
  "overall":{"status":"inspected","exit_code":0,"rules_applied":false,...}}
 ```
 
-The profile's numeric view parses `"00123"` as 123 without rewriting the preserved string, and literal `NA` counts as a value, not as missing. (`...` marks fields elided here for width; the real document is complete and compact.)
+Two details worth noticing: `"00123"` is read as the number 123 for the numeric stats, but the original string is kept as is; and the literal text `NA` counts as a value, not as missing. (`...` just marks fields I cut for width. The real output is complete.)
 
-**3. Apply the rules and save the result** (exit 1 — violations):
+**3. Apply the rules** (this exits 1 because some rules fail):
 
 ```bash
 python <skill-directory>/scripts/dq.py customers.csv --rules rules.yml > report.json
 ```
 
-Failing checks, verbatim from the real output:
+The failing checks, copied from the actual output:
 
 ```json
 {"rule":"required","dimension":"completeness","scope":"column","column":"name","evaluated":4,"violations":1,
@@ -149,7 +153,7 @@ Failing checks, verbatim from the real output:
 
 `overall`: `{"status":"failed","exit_code":1,"rules_applied":true,"checks_passed":3,"checks_failed":3,"checks_not_evaluated":0}`
 
-**4. Build the report or dashboard from `report.json`.** `references/OUTPUT.md` documents every field, status, `details` shape, warning and error code. `SKILL.md` gives the human-facing report format and the dashboard rules; in short: use the saved JSON (never recomputed numbers), show the three dimension rule-conformance scores with `evaluated`/`violations`, show no global score, render `null` as "not assessed", and treat `--examples` values as raw and shareable only with consent. The skill ships no dashboard generator — the host agent builds it.
+**4. Build the report or dashboard from `report.json`.** Every field, status, warning and error code is documented in `references/OUTPUT.md`, and `SKILL.md` describes how the agent should present results. The short version: take numbers from the saved JSON rather than recalculating them, show the three dimension scores with their `evaluated` and `violations` counts, don't invent an overall score, show `null` as "not assessed", and treat `--examples` values as raw data you only share with the user's consent. There's no dashboard generator in the skill; the agent builds that.
 
 **Other sources and options:**
 
@@ -160,11 +164,11 @@ python <skill-directory>/scripts/dq.py data.csv --encoding cp1256
 python <skill-directory>/scripts/dq.py data.csv --rules rules.yml --examples 3
 ```
 
-Exit codes: `0` = inspected / no failed rules · `1` = rule violations · `2` = input, configuration, dependency, or execution error (errors take precedence). A no-rules run reports `inspected`, never `passed`.
+Exit codes: `0` means inspected with no failed rules, `1` means at least one rule failed, and `2` means an input, configuration, dependency, or execution error (errors win over everything else). A run with no rules reports `inspected`, never `passed`.
 
-### Programmatic use
+### Calling it from Python
 
-`dq.run()` returns exactly the CLI payload and never raises, so an agent can inspect results in-process:
+`dq.run()` returns the same payload the CLI prints and never raises, so an agent can use it in-process:
 
 ```python
 import sys
@@ -175,27 +179,27 @@ payload = dq.run("customers.csv", "rules.yml")
 payload["overall"]["exit_code"]  # 0, 1, or 2
 ```
 
-The signature mirrors the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0)`. The CLI JSON remains the primary contract.
+The arguments match the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0)`. The CLI's JSON is still the main contract.
 
-## Repository layout
+## What's in the repo
 
 ```text
 README.md                      this file
 CHANGELOG.md                   release notes
 LICENSE                        MIT
 .github/workflows/ci.yml       tests on Python 3.10–3.14 + full-history secret scan
-skills/data-quality/           the portable skill bundle (the download payload)
-  SKILL.md                     skill instructions + frontmatter
-  LICENSE                      MIT notice retained in copy-only installs
-  scripts/dq.py                the single CLI helper and dq.run()
+skills/data-quality/           the skill itself (this is what the release zip contains)
+  SKILL.md                     instructions the agent reads
+  LICENSE                      MIT notice, so copied installs keep it
+  scripts/dq.py                the CLI and dq.run()
   scripts/requirements.txt     runtime dependency ranges
-  references/RULES.md          rule semantics, evidence rules, read-only guarantees
-  references/OUTPUT.md         JSON field reference for reports and dashboards
-tests/test_dq.py               pytest suite (CLI-level + unit tests)
-tests/test_publication.py      packaging, licensing and release-safety tests
-tests/test_skill_bundle.py     dependency-doc sync, OUTPUT.md contract, copy parity, versions
-benchmark/run.py               defect-injection benchmark (UCI Adult + ERPNext)
-benchmark/public/              UCI Adult fixture (CC BY 4.0), notice + rules
+  references/RULES.md          exactly how each rule is evaluated
+  references/OUTPUT.md         field-by-field guide to the JSON output
+tests/test_dq.py               main pytest suite (CLI and unit tests)
+tests/test_publication.py      packaging, licensing and release checks
+tests/test_skill_bundle.py     doc/dependency sync, OUTPUT.md contract, copy parity, versions
+benchmark/run.py               defect-injection benchmark (UCI Adult, plus ERPNext if you have an export)
+benchmark/public/              UCI Adult data (CC BY 4.0), its notice, and rules
 benchmark/private/             local-only datasets (gitignored)
 ```
 
@@ -203,19 +207,19 @@ benchmark/private/             local-only datasets (gitignored)
 
 | Source | Extensions | Notes |
 |---|---|---|
-| CSV / TSV | `.csv`, `.tsv` | one header row; duplicate/empty headers rejected; blank lines preserved as all-empty records; short rows padded as missing; records **wider** than the header are rejected, never truncated or shifted |
-| Excel | `.xlsx` | `--sheet NAME` or the first worksheet (named explicitly in the report); formulas never executed (presence reported, cached values may be missing/stale); merged-cell warnings; a sheet whose data rows are wider than the header row is rejected (the extra column has no header name) |
-| JSON | `.json` | array of flat records; scalar values only — nested structures rejected |
-| JSONL / NDJSON | `.jsonl`, `.ndjson` | one flat record per nonblank line |
-| Text / Markdown | `.txt`, `.md`, `.markdown` | each line is a record in a `text` column; blank lines preserved; extra statistics (blank lines, duplicate lines, length range, unusual control characters) |
-| SQLite | `.sqlite`, `.sqlite3`, `.db` | one `--table NAME`; opened with URI `mode=ro`; views unsupported; exact table-name validation and identifier quoting |
-| Parquet | `.parquet`, `.pq` | flat scalar tables; requires optional `pyarrow`; nested fields rejected |
+| CSV / TSV | `.csv`, `.tsv` | One header row. Duplicate or empty headers are rejected. Blank lines are kept as empty records, short rows are padded as missing, and rows *wider* than the header are rejected rather than truncated or shifted. |
+| Excel | `.xlsx` | `--sheet NAME`, or the first sheet (named in the report). Formulas are never run; their presence is reported and cached values may be missing or stale. Merged cells produce a warning. Data wider than the header row is rejected. |
+| JSON | `.json` | An array of flat records with scalar values. Nested structures are rejected. |
+| JSONL / NDJSON | `.jsonl`, `.ndjson` | One flat record per non-blank line. |
+| Text / Markdown | `.txt`, `.md`, `.markdown` | Each line becomes a record in a `text` column. Blank lines are kept. Adds stats for blank lines, duplicate lines, line lengths, and unusual control characters. |
+| SQLite | `.sqlite`, `.sqlite3`, `.db` | One `--table NAME`, opened read-only (`mode=ro`). Views aren't supported. Table names are validated exactly and quoted. |
+| Parquet | `.parquet`, `.pq` | Flat tables only; needs the optional `pyarrow`. Nested fields are rejected. |
 
-Other databases (PostgreSQL/MySQL/SQL Server): export to a supported file first — the current scope ships no connectors and implies none.
+For PostgreSQL, MySQL or SQL Server, export the table to one of the formats above. There are no database connectors.
 
 ## Rules
 
-Exactly eight column rules — `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex` — and three dataset rules: `max_duplicate_rows`, `unique_together`, and the narrow cross-field `conditional_required`. Compound keys use a non-empty list of groups, and conditional requirements use one exact scalar trigger and one different required column:
+There are eight column rules (`required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex`) and three dataset rules: `max_duplicate_rows`, `unique_together` for compound keys, and `conditional_required` for simple "if this, then that must be filled" cases:
 
 ```yaml
 dataset:
@@ -226,74 +230,75 @@ dataset:
       then_required: closed_date
 ```
 
-Counting semantics (missing values, missing percentages, duplicate groups, numeric parsing, type matching, exact scalar matching), evidence limits, and read-only guarantees are specified in `skills/data-quality/references/RULES.md` — read it before writing rules.
+How missing values, percentages, duplicates, number parsing, type matching and exact matching are counted, plus evidence limits and the read-only guarantees, is all spelled out in `skills/data-quality/references/RULES.md`. Read it before writing rules.
 
-## Rule provenance in agent reports
+## Where rules come from
 
-The YAML rule syntax intentionally has no provenance fields. Provenance is a host-agent reporting concept, so the deterministic engine and JSON contract remain unchanged. Classify each rule before writing it:
+A rule failing only means something if the rule was right in the first place. So when the agent writes a report, it labels each rule by where it came from. This lives in the report, not in the YAML, so the engine and its output format stay the same.
 
-- **Explicit constraint (confirmed):** directly required by the user, contract, standard, schema, policy, SLA, or authoritative source.
-- **Source-informed candidate:** strongly suggested by official metadata, but not explicitly established as a requirement. A documented field or value vocabulary does not by itself make a field mandatory.
-- **Inferred candidate:** suggested by the LLM from profiling, observed patterns, context, or likely semantics.
+- **Explicit constraint (confirmed):** the user, a contract, a standard, a schema, a policy, an SLA, or another authoritative source actually requires it.
+- **Source-informed candidate:** official metadata strongly suggests it, but nobody has said it's a requirement. A field being documented doesn't make it mandatory.
+- **Inferred candidate:** the agent guessed it from the profile, patterns in the data, or what the columns probably mean.
 
-Only failed explicit/confirmed constraints belong under **Confirmed findings**. Failures from source-informed and inferred candidates belong under **Candidate findings** and must include their provenance, rationale, evidence/source, uncertainty, and deterministic result. Official metadata alone must not promote a candidate to a confirmed business requirement. When the distinction affects interpretation, run confirmed constraints separately from candidate rules.
+Only failed confirmed constraints go under **Confirmed findings**. Failures from the other two go under **Candidate findings**, along with where the rule came from, why it was proposed, the evidence, how uncertain it is, and the result. Official metadata on its own doesn't promote a candidate to a confirmed requirement. When the difference matters, run the confirmed rules and the candidate rules separately.
 
-## Output contract
+## Output
 
-One compact JSON document on stdout with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors`, `overall`. Every check carries its rule, fixed `dimension` (`completeness`, `uniqueness`, or `validity`), scope/column, `evaluated` count, `violations` count, `status` (`passed` / `failed` / `not_evaluated`), and up to 10 run-local `row_refs`. `unique_together` and `conditional_required` checks leave `column` as `null` and identify their columns in `columns` and `details`. Example values are opt-in (`--examples N`, ≤5 per check, ≤100 characters total including any `…` marker) and are **not anonymized**. Strict JSON: no NaN/Infinity tokens.
+The script prints one compact JSON document with `schema_version`, `source`, `selection`, `profile`, `checks`, `dimensions`, `warnings`, `errors` and `overall`. Each check records its rule, a fixed `dimension` (`completeness`, `uniqueness` or `validity`), its scope or column, how many values it `evaluated`, how many `violations` it found, a `status` (`passed`, `failed` or `not_evaluated`), and up to 10 `row_refs` pointing at offending rows. `unique_together` and `conditional_required` checks set `column` to `null` and list their columns in `columns` and `details`. Example values only appear if you ask for them (`--examples N`, at most 5 per check and 100 characters in total, counting any `…`), and they are **not anonymized**. The JSON is strict: no NaN or Infinity.
 
-`dimensions` always contains `completeness`, `uniqueness`, and `validity`. Each aggregates only evaluated checks in that dimension: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`; `score` is rounded to 2 decimals after calculation and is `null` when no checks are evaluated. These are **rule-conformance percentages**: they measure how the supplied rule applications performed, not intrinsic dataset cleanliness or the percentage of the dataset that is clean. There is no overall or global DQ score.
+`dimensions` always has `completeness`, `uniqueness` and `validity`. Each one adds up only the checks that were actually evaluated: `score = (sum(evaluated) - sum(violations)) / sum(evaluated) * 100`, rounded to 2 decimals, or `null` if nothing in that dimension was evaluated.
 
-The full field-by-field reference — top-level keys, per-column profile fields, every check field and `details` shape, statuses, warnings, error codes and exit codes — is [`skills/data-quality/references/OUTPUT.md`](skills/data-quality/references/OUTPUT.md). A test checks that reference against the engine.
+It's important to read these correctly. They are **rule-conformance percentages**: how well the data did against the rules you gave it. They are not a measure of how clean the dataset is overall, and there is deliberately no single overall score.
 
-## Human-facing dimension reporting
+The full reference is [`skills/data-quality/references/OUTPUT.md`](skills/data-quality/references/OUTPUT.md), and a test checks it against what the engine really emits.
 
-When summarizing results, use **Completeness rule-conformance**, **Uniqueness rule-conformance**, and **Validity rule-conformance**. Include the exact score plus `evaluated` / `violations`, and include coverage context when practical: the number of checks, distinct columns or scopes, and total evaluated rule applications. Example:
+## Presenting the scores
+
+In a human-facing summary, call them **Completeness rule-conformance**, **Uniqueness rule-conformance** and **Validity rule-conformance**. Give the exact score with its `evaluated` and `violations` counts, and where you can, how much ground the rules covered (number of checks, columns or scopes, and rule applications):
 
 ```text
 Validity rule-conformance: 99.98% — 5 checks · 4 columns · 99,101 rule applications
 ```
 
-Coverage counts are derived from the emitted checks in the report layer; they do not change the JSON field names or score formula. **Dimension percentages produced from materially different rule sets are not directly comparable.** Do not rank a 100% result from two lenient checks against a 100% result from eight stricter checks as though they represented equivalent coverage.
+Those coverage numbers are worked out from the checks in the report; they don't change the JSON or the formula. **Scores from very different rule sets can't be compared directly.** 100% on two loose checks is not the same as 100% on eight strict ones.
 
-For the default concise human-facing summary and the dashboard rules, follow [`skills/data-quality/SKILL.md`](skills/data-quality/SKILL.md); raw JSON is machine evidence and should be shown only when requested.
+[`skills/data-quality/SKILL.md`](skills/data-quality/SKILL.md) has the default report layout and the dashboard rules. Raw JSON is for machines; only show it if someone asks.
 
-## Versioning and releases
+## Versions and releases
 
-Versions are git tags and GitHub releases; the repository is not a Python package and is not published to PyPI. Release assets are built from `git archive` of the tag, so they contain exactly the tracked `skills/data-quality/` tree.
+Versions are git tags and GitHub releases. This isn't a Python package and it isn't on PyPI. Release zips are built with `git archive` from the tag, so they contain exactly what's tracked under `skills/data-quality/`.
 
-Release history and per-version notes: [CHANGELOG.md](CHANGELOG.md). The latest release: [github.com/aalomair/agent-data-quality-skill/releases/latest](https://github.com/aalomair/agent-data-quality-skill/releases/latest).
+Release notes are in [CHANGELOG.md](CHANGELOG.md), and the newest release is always at [github.com/aalomair/agent-data-quality-skill/releases/latest](https://github.com/aalomair/agent-data-quality-skill/releases/latest).
 
 ## Limits
 
-- Sources above **50 MiB** or **200,000 rows** are rejected (exit 2) — never sampled, truncated, or reported as if complete. Reads are bounded per format where possible; there is no streaming framework and no promised hard memory ceiling.
-- One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected (exit 2) — data is never truncated, shifted, or silently dropped.
-- Text encoding: strict UTF-8 with BOM acceptance by default; `--encoding NAME` adds other encodings strictly — no lossy replacement or auto-detection.
-- Python regular expressions can catastrophically backtrack on some patterns. Untrusted or automated runs should use a host-enforced execution timeout; the helper does not provide a regex timeout.
+- Files over **50 MiB** or **200,000 rows** are rejected with exit code 2. They're never sampled or partially read and then reported as if complete. Reading is bounded per format where possible, but there's no streaming and no hard memory guarantee.
+- One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected; data is never truncated, shifted or quietly dropped.
+- Text defaults to strict UTF-8 (a BOM is fine). `--encoding NAME` lets you use another encoding, still strictly, with no lossy replacement and no auto-detection.
+- Some regular expressions can backtrack catastrophically in Python. If you're running untrusted rules or running unattended, set a timeout in the host. The script doesn't have its own regex timeout.
 
-## Read-only boundaries
+## Read-only, always
 
-- Source data is permanently read-only. The helper never writes to the source. SQLite is opened via URI `mode=ro`; write attempts fail with `attempt to write a readonly database` (enforced by tests). All readers are verified to leave source bytes unchanged. Note: opening a WAL-mode database read-only may create SQLite's transient `-shm`/`-wal` sidecar files — the database file itself is never written.
-- Cleansing, repair, and data alteration are out of scope by design; findings and suggested fixes are explanations only.
-- No network access, no model calls, and no execution of data-derived strings. There is no output-file flag.
-- `row_refs` are run-local record positions (1-based; physical line numbers for text sources; scan offsets for SQLite), not permanent row identifiers.
+- The script never writes to the source. SQLite is opened with `mode=ro`, so any write fails with `attempt to write a readonly database`, and the tests confirm every reader leaves the source bytes unchanged. One caveat: opening a WAL-mode SQLite database read-only can create SQLite's temporary `-shm`/`-wal` files next to it. The database file itself is untouched.
+- Cleaning or fixing data is out of scope on purpose. Suggested fixes in a report are explanations, nothing more.
+- No network, no model calls, and nothing from the data is ever executed. There's no option to write output to a file; you redirect stdout yourself.
+- `row_refs` are positions within that run (1-based; physical line numbers for text files; scan order for SQLite), not permanent row IDs.
 
-## What this does not assess
+## What it doesn't tell you
 
-- Semantic or factual quality of text; freshness without an SLA; accuracy without reference data.
-- Baselines, drift, distribution changes, or outlier detection — deferred by design.
-- Cleansing, repair, or alteration of source data — permanently out of scope by design; findings and suggested fixes are explanations only.
-- XLSX formulas are not evaluated; cached values may be missing or stale (a warning says so).
-- No overall or global DQ score; exit 0 alone never proves dataset quality.
-- Escaping adversarial cells as data does not make every host model immune to prompt injection.
+- Whether text is semantically or factually correct, whether data is fresh (without an SLA to check against), or whether it's accurate (without reference data).
+- Anything about baselines, drift, distribution changes or outliers.
+- XLSX formula results; formulas aren't evaluated and cached values may be missing or stale (you'll get a warning).
+- An overall quality score. Exit 0 on its own doesn't prove the data is good.
+- Treating hostile cell contents as plain data helps, but it can't make every host model immune to prompt injection.
 
-## Verification status
+## Verification
 
-Local environment for the dated run below: Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1, pyarrow 25.0.1.
+The dated runs below used Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1 and pyarrow 25.0.1.
 
-- **Local suite (2026-11-07)** — `210 passed` on Python 3.14, `210 passed` in a clean Python 3.11 virtual environment, and `210 passed` in a clean Python 3.10 virtual environment.
-- **UCI Adult benchmark (2026-11-07)** — **60/60** expected rule-violation detections, 0 unexpected, source unchanged. These are injected/overlapping rule checks, not 60 independent naturally occurring defects; see the [benchmark notice](benchmark/public/README.md).
-- **CI** — [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the full suite on Python 3.10, 3.11, 3.12, 3.13 and 3.14, plus a checksum-verified full-history Gitleaks scan, on every push. The exact commit and run for a release are recorded in the release notes/report; a run verifies only the commit it ran on.
+- **Test suite (2026-11-07):** `210 passed` on Python 3.14, and again in clean Python 3.11 and 3.10 virtual environments.
+- **UCI Adult benchmark (2026-11-07):** **60/60** expected rule violations detected, 0 unexpected, source file unchanged. These are injected defects counted per rule check, and some checks overlap, so this isn't 60 independent real-world defects. See the [benchmark notice](benchmark/public/README.md).
+- **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the whole suite on Python 3.10, 3.11, 3.12, 3.13 and 3.14, plus a Gitleaks scan of the full git history, on every push. A CI run only vouches for the commit it ran on.
 
 ## Development
 
@@ -303,28 +308,26 @@ python -m pip install -r skills/data-quality/scripts/requirements.txt pytest pya
 python -m pytest tests/ -q
 ```
 
-If `python -m venv` produces an environment without pip (some distro builds omit `ensurepip`), create it with `uv venv` and install with `uv pip install` — the dependency set is identical.
+Some Linux distros ship Python without `ensurepip`, so `python -m venv` gives you an environment with no pip. If that happens, use `uv venv` and `uv pip install` instead; the dependencies are the same.
 
-CI (`.github/workflows/ci.yml`) runs the same suite across Python 3.10–3.14 and a separate full-history Gitleaks scan. Jobs use read-only repository permissions, checkout without persisted credentials, and immutable action SHAs; the scanner binary is version-pinned and SHA-256-verified before execution. Runtime dependency ranges remain flexible rather than fully locked.
+CI uses read-only repository permissions, doesn't persist checkout credentials, and pins actions to commit SHAs. The Gitleaks binary is pinned to a version and its SHA-256 is checked before it runs. Runtime dependencies use version ranges rather than a lock file.
 
-Keep credentials in ignored `.env`/`.env.*` files, and put generated reports in the ignored `reports/` directory. Only sanitized placeholders belong in a tracked `.env.example`. Ignore rules do not remove already tracked secrets; inspect staged files and run the secret scan before pushing.
+Keep any credentials in `.env` or `.env.*` files and generated reports in `reports/`; both are gitignored. A tracked `.env.example` should only ever hold placeholders. Note that `.gitignore` won't remove a secret that's already been committed, so look at what you're staging and run the secret scan before you push.
 
-## Roadmap (deferred by design)
+## Not planned
 
-The current scope stops at the capabilities described above. The following are deliberately **not** implemented, and no extension infrastructure is being designed for them now:
+These are left out on purpose, and I'm not building hooks for them:
 
-- **Baseline comparison** — no stored profiles, no comparison against a previous edition of a dataset.
-- **Drift / distribution-change detection** — no change detection between runs.
-- **IQR / statistical anomaly detection** — outliers are not flagged; only the rules the user supplies are checked.
-- **SQLAlchemy or any live non-SQLite database access** — PostgreSQL, MySQL, and SQL Server go through an export to a supported file first.
-- **Remediation / repair** — the skill never modifies source data; findings and suggested fixes are explanations only.
+- **Baseline comparison:** no saved profiles to compare a new version of a dataset against.
+- **Drift detection:** nothing that tracks changes between runs.
+- **Statistical outlier detection (IQR and similar):** only the rules you supply are checked.
+- **Live database connections beyond SQLite** (SQLAlchemy, PostgreSQL, MySQL, SQL Server): export to a file first.
+- **Fixing data:** the skill reads; it never modifies.
 
-The source-data boundary is permanent: cleansing, repair, and data alteration are out of scope by design.
-
-No extension roadmap is promised for those boundaries; future work, if any, remains read-only profiling and rule checking.
+If the project grows, it will grow as read-only profiling and rule checking.
 
 ## License
 
-Project code and documentation are MIT-licensed — see [LICENSE](LICENSE). The portable skill includes the same [MIT notice](skills/data-quality/LICENSE) so directory-only installs retain it.
+The code and docs are MIT; see [LICENSE](LICENSE). The skill folder carries its own copy of the [MIT notice](skills/data-quality/LICENSE) so it survives being copied on its own.
 
-The third-party `benchmark/public/adult.csv` dataset is **CC BY 4.0**, not MIT. See [dataset attribution, license links, transformations, and checksums](benchmark/public/README.md). The benchmark rules and program remain MIT-licensed.
+`benchmark/public/adult.csv` is third-party data under **CC BY 4.0**, not MIT. Attribution, license links, the changes made to it, and checksums are in the [dataset notice](benchmark/public/README.md). The benchmark rules and script are MIT.

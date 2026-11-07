@@ -4,7 +4,7 @@ All notable changes to this project are documented here. Versions are git tags a
 
 ## [0.3.0] — 2026-11-07
 
-Agent-ready distribution and two engine additions, without changing the read-only architecture.
+Makes the skill easy for an agent to download and install on its own, and adds two dataset rules. The read-only design is unchanged.
 
 Distribution and agent experience:
 
