@@ -79,8 +79,18 @@ def test_ci_has_read_only_permissions_pinned_actions_and_full_history_scan():
     assert "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb" in script
 
 
-def test_development_version_is_not_presented_as_a_published_release():
+def test_ci_matrix_covers_every_claimed_python_version():
+    workflow = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+    matrix = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+    assert matrix == ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+
+def test_release_download_and_changelog_are_documented():
     readme = (ROOT / "README.md").read_text()
-    assert "**v0.3.0 (unreleased)**" in readme
-    assert "releases/tag/v0.2.1" in readme
-    assert "## v0.3.0 changes (unreleased)" in readme
+    assert "releases/latest/download/data-quality-skill.zip" in readme
+    assert "releases/download/v0.3.0/data-quality-skill.zip" in readme
+    assert "SHA256SUMS" in readme
+    changelog = (ROOT / "CHANGELOG.md").read_text()
+    assert changelog.startswith("# Changelog")
+    assert re.search(r"^## \[0\.3\.0\]", changelog, re.M)
+    assert "CHANGELOG.md" in readme

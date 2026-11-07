@@ -2,7 +2,7 @@
 name: data-quality
 description: Profile local datasets (CSV, TSV, XLSX, JSON, JSONL, text, SQLite, Parquet) and check YAML data-quality rules read-only.
 license: MIT
-compatibility: Requires Python 3.10+ plus the dependencies in scripts/requirements.txt (Parquet needs optional pyarrow). Reads local files and one local SQLite table; no network access. Tested on Linux with Python 3.14.
+compatibility: Requires Python 3.10–3.14 plus the dependencies in scripts/requirements.txt (XLSX needs openpyxl; Parquet needs optional pyarrow). Reads local files and one local SQLite table; no network access. CI-tested on Linux with Python 3.10–3.14.
 metadata:
   author: Abdullatif Alomair
   version: "0.3.0"
@@ -22,12 +22,36 @@ Portability note: this bundle follows the portable Agent Skills layout (`SKILL.m
 
 Don't use for: cleansing, repairing, or altering source data (permanently out of scope by design); comparing editions (no baselines/drift detection); semantic or factual validation of text; or non-SQLite databases (export to a supported file first).
 
+## Getting and installing this skill
+
+- Download the bundle: `https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip` (or pin a version with `.../releases/download/v0.3.0/data-quality-skill.zip`). The zip unpacks to a single `data-quality/` directory.
+- Place that directory in the host's skills directory, or keep it anywhere and resolve `scripts/dq.py` relative to it. Nothing needs to be installed from this repository itself; only the runtime dependencies below.
+- Git alternative: shallow-clone the repository and copy `skills/data-quality/` out of it.
+
 ## Prerequisites
 
-- Python 3.10+ and the skill's runtime dependencies, resolved relative to this skill directory:
-  `python -m pip install -r scripts/requirements.txt`
-- Optional: `python -m pip install 'pyarrow>=15'` only if Parquet sources are needed.
-- No configuration, credentials, or network access.
+The skill never installs packages. You (the host agent) or the user decide whether to install these and where — an existing environment or a fresh virtual environment — following the host's and user's policy.
+
+- Python 3.10–3.14.
+- `pandas>=2.2,<4` — required on every run.
+- `PyYAML>=6.0,<7` — required on every run (import name `yaml`).
+- `openpyxl>=3.1,<4` — only for `.xlsx` sources.
+- `pyarrow>=15` — optional, only for `.parquet` sources.
+
+`scripts/requirements.txt` is the authoritative range list and mirrors the list above. Check availability before a run:
+
+```bash
+python -c "import pandas, yaml"
+```
+
+Example install, into the environment you or the user choose:
+
+```bash
+python -m pip install -r <skill-directory>/scripts/requirements.txt
+python -m pip install 'pyarrow>=15'   # optional, Parquet only
+```
+
+Without `pandas` or `yaml`, the helper still prints one valid JSON error document with `errors[0].code == "missing_dependency"` and exits 2; stdout never carries a traceback. No configuration, credentials, or network access are involved.
 
 ## How to Run
 
@@ -40,6 +64,22 @@ python <skill-directory>/scripts/dq.py SOURCE [--rules rules.yml] [--sheet NAME]
 - Always profiles; applies rules only when `--rules` is supplied.
 - JSON goes to stdout, diagnostics to stderr. There is no output-file flag: to save a report, redirect to a NEW path (e.g. `> report.json`) and never onto the source or rules file.
 - Exit codes: 0 = inspected / no failed rules; 1 = rule violations; 2 = input, configuration, or execution error (errors take precedence).
+
+### Programmatic use (no installation)
+
+Put `<skill-directory>/scripts` on `sys.path` and import the helper; `dq.run()` returns exactly the JSON payload the CLI prints and never raises:
+
+```python
+import sys
+sys.path.insert(0, "<skill-directory>/scripts")
+import dq
+
+payload = dq.run("data.csv", "rules.yml", examples=2)
+payload["overall"]["exit_code"]   # 0, 1, or 2
+payload["errors"]                 # [] or [{"code": ..., "message": ...}]
+```
+
+The signature mirrors the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0)`. The CLI remains the primary contract; `run()` is the same payload as a dict, including error payloads.
 
 ## Quick Reference
 
@@ -112,6 +152,19 @@ After the deterministic run, produce this concise report by default. Do not dump
 6. **Suggested next checks/actions**
    - Give read-only recommendations only.
    - Do not recommend or perform cleansing, repair, or source modification.
+
+## Results for reports and dashboards
+
+The JSON is the evidence. `references/OUTPUT.md` documents every field, status, detail shape and error code. When the user asks for a written report, spreadsheet, or dashboard:
+
+- Save the JSON to a new file first (`> report.json`); never write to the source or rules file.
+- Build the output from that saved JSON, never from recomputed numbers.
+- Show the three dimension rule-conformance scores, each with `evaluated`, `violations` and coverage context. Show no global score, and display `null` as **not assessed**.
+- Keep confirmed findings and candidate findings separate.
+- Do not put `--examples` raw values into a shareable artifact without the user's consent.
+- Write the dashboard outside the source data location unless the user asks otherwise.
+
+This skill ships no dashboard generator, HTML renderer, or charting dependency: the host agent builds the dashboard from the saved JSON.
 
 ## Pitfalls
 

@@ -1,5 +1,5 @@
 # Runtime dependencies for the data-quality skill (scripts/dq.py).
-# Tested 2026-09-20: pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3 on Python 3.14.
+# CI installs these ranges and runs the suite on Python 3.10–3.14.
 # Install:  python -m pip install -r requirements.txt
 pandas>=2.2,<4
 openpyxl>=3.1,<4

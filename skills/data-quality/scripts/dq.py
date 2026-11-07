@@ -36,9 +36,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-import yaml
-from pandas.errors import EmptyDataError, ParserError
+# Runtime dependencies are imported defensively: a bare interpreter must still
+# be able to emit the documented JSON error contract instead of a traceback.
+_MISSING_DEPENDENCIES: list[str] = []
+
+try:
+    import pandas as pd
+    from pandas.errors import EmptyDataError, ParserError
+except ImportError:  # pragma: no cover - exercised in a dependency-free venv
+    pd = None  # type: ignore[assignment]
+    _MISSING_DEPENDENCIES.append("pandas")
+
+    class EmptyDataError(Exception):
+        """Placeholder; pandas readers never run without pandas."""
+
+    class ParserError(Exception):
+        """Placeholder; pandas readers never run without pandas."""
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - exercised in a dependency-free venv
+    yaml = None  # type: ignore[assignment]
+    _MISSING_DEPENDENCIES.append("yaml")
 
 __version__ = "0.3.0"
 SCHEMA_VERSION = "1.0"
@@ -112,8 +131,15 @@ class DqError(Exception):
         self.message = message
 
 
-class _StrictLoader(yaml.SafeLoader):
-    """SafeLoader that rejects duplicate mapping keys."""
+if yaml is not None:
+
+    class _StrictLoader(yaml.SafeLoader):
+        """SafeLoader that rejects duplicate mapping keys."""
+
+else:  # pragma: no cover - PyYAML is a required dependency
+
+    class _StrictLoader:  # type: ignore[no-redef]
+        """Placeholder; rule files are never parsed without PyYAML."""
 
 
 def _strict_mapping(loader, node, deep=False):
@@ -131,9 +157,10 @@ def _strict_mapping(loader, node, deep=False):
     return mapping
 
 
-_StrictLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _strict_mapping
-)
+if yaml is not None:
+    _StrictLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _strict_mapping
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +399,12 @@ def _validate_delimited_header(path: Path, delimiter: str, encoding: str) -> lis
             "decode_error",
             f"source cannot be decoded with encoding {encoding!r}: {exc}",
         )
+    except csv.Error as exc:
+        # Python 3.10 raises _csv.Error on NUL lines while newer versions let
+        # the field checks above report it; keep one documented error either way.
+        if "NUL" in str(exc).upper():
+            raise DqError("malformed_source", "NUL character in source")
+        raise DqError("malformed_source", f"malformed delimited record: {exc}")
     finally:
         csv.field_size_limit(previous_field_limit)
     if not header:
@@ -1703,6 +1736,16 @@ def parse_args(argv: list[str]):
     return parser.parse_args(argv)
 
 
+def _missing_dependency_message() -> str:
+    names = ", ".join(_MISSING_DEPENDENCIES)
+    return (
+        f"missing runtime dependency: {names}; install the skill's runtime "
+        "dependencies with `python -m pip install -r "
+        "<skill-dir>/scripts/requirements.txt` (the skill never installs "
+        "packages itself)"
+    )
+
+
 def inspect(
     source_arg: str,
     rules_arg: str | None,
@@ -1711,6 +1754,8 @@ def inspect(
     encoding: str | None,
     examples: int,
 ) -> tuple[dict, int]:
+    if _MISSING_DEPENDENCIES:
+        raise DqError("missing_dependency", _missing_dependency_message())
     if examples < 0:
         raise DqError("invalid_option", "--examples must be zero or a positive integer")
     examples_requested = min(examples, MAX_EXAMPLES)
@@ -1790,26 +1835,57 @@ def inspect(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def run(
+    source: str,
+    rules: str | None = None,
+    *,
+    sheet: str | None = None,
+    table: str | None = None,
+    encoding: str | None = None,
+    examples: int = 0,
+) -> dict:
+    """Return the CLI's report payload for one inspection; never raises.
+
+    ``run`` is the documented programmatic entry point: load this module from
+    the skill's ``scripts/`` directory (no installation) and call it. The
+    returned dict is exactly what the command line prints for the same inputs,
+    including error payloads (``overall.exit_code`` == 2, ``errors`` populated).
+    """
     try:
-        args = parse_args(sys.argv[1:] if argv is None else list(argv))
-        payload, exit_code = inspect(
-            source_arg=args.source,
-            rules_arg=args.rules,
-            sheet=args.sheet,
-            table=args.table,
-            encoding=args.encoding,
-            examples=args.examples,
+        payload, _ = inspect(
+            source_arg=source,
+            rules_arg=rules,
+            sheet=sheet,
+            table=table,
+            encoding=encoding,
+            examples=examples,
         )
     except DqError as exc:
         payload = error_payload(exc.code, exc.message)
-        exit_code = 2
     except Exception as exc:  # unexpected failure: keep the JSON contract
         traceback.print_exc()
         payload = error_payload(
             "internal_error", f"unexpected error: {type(exc).__name__}: {exc}"
         )
+    return payload
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = parse_args(sys.argv[1:] if argv is None else list(argv))
+    except DqError as exc:
+        payload = error_payload(exc.code, exc.message)
         exit_code = 2
+    else:
+        payload = run(
+            args.source,
+            args.rules,
+            sheet=args.sheet,
+            table=args.table,
+            encoding=args.encoding,
+            examples=args.examples,
+        )
+        exit_code = payload["overall"]["exit_code"]
     try:
         text = render(payload)
     except (TypeError, ValueError) as exc:
