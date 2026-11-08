@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. Versions are git tags and GitHub releases; this is not a Python package.
 
+## [0.4.0] — 2026-11-08
+
+Better rule coverage for comprehensive assessments, based on benchmark runs across several agents. The engine, rules, and JSON output are unchanged.
+
+- `SKILL.md` adds a comprehensive-assessment procedure: walk every rule family against every column, inspect low-cardinality values before writing `allowed`/`regex`, separate column, compound-key and whole-row uniqueness, separate always-required from state-dependent fields, and fit regexes to every legitimate subpopulation.
+- The human-facing report gains a **Supported but not assessed** section listing plausible checks that were not run, with reasons.
+- Reporting guidance separates rule violations, distinct affected rows, duplicate extras and rule-conformance scores, and keeps profile observations apart from failed-rule findings.
+- Out-of-scope observations (calendar-impossible dates, cross-column arithmetic, date ordering, cross-table references) must be labelled as outside the engine's checks.
+- Dependency preflight: check the interpreter and imports first; if installation is blocked, report exactly what is missing instead of producing results.
+
 ## [0.3.0] — 2026-11-07
 
 Makes the skill easy for an agent to download and install on its own, and adds two dataset rules. The read-only design is unchanged.

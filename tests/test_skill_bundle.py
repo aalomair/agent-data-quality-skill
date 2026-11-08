@@ -414,6 +414,10 @@ def test_skill_md_carries_the_dashboard_and_results_rules():
         "candidate",
         "consent",
         "outside the source data location",
+        "Comprehensive assessments",
+        "Supported but not assessed",
+        "every rule family",
+        "outside the engine's checks",
     ):
         assert phrase.lower() in text.lower(), phrase
 
@@ -484,7 +488,7 @@ def _versions() -> dict[str, str]:
 
 def test_version_is_consistent_everywhere():
     versions = _versions()
-    assert set(versions.values()) == {"0.3.0"}, versions
+    assert set(versions.values()) == {"0.4.0"}, versions
 
 
 def test_no_document_calls_the_version_unreleased_or_is_pip_installable():

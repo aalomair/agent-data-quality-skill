@@ -88,7 +88,7 @@ def test_ci_matrix_covers_every_claimed_python_version():
 def test_release_download_and_changelog_are_documented():
     readme = (ROOT / "README.md").read_text()
     assert "releases/latest/download/data-quality-skill.zip" in readme
-    assert "releases/download/v0.3.0/data-quality-skill.zip" in readme
+    assert "releases/download/v0.4.0/data-quality-skill.zip" in readme
     assert "SHA256SUMS" in readme
     changelog = (ROOT / "CHANGELOG.md").read_text()
     assert changelog.startswith("# Changelog")

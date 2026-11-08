@@ -2,7 +2,7 @@
 
 An [Agent Skill](https://agentskills.io/specification) that lets an AI agent check the quality of a local dataset without guessing at the numbers.
 
-**Version 0.3.0** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
+**Version 0.4.0** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
 
 ## Why this exists
 
@@ -21,7 +21,7 @@ curl -fsSL -o data-quality-skill.zip \
   https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip
 
 # or pin this exact version:
-# https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.3.0/data-quality-skill.zip
+# https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.4.0/data-quality-skill.zip
 ```
 
 ```bash
@@ -75,9 +75,13 @@ If `pandas` or `yaml` is missing, the script doesn't crash with a traceback. It 
 ### 4. Check it works
 
 ```bash
+python --version
+python -c "import pandas, yaml; print('pandas', pandas.__version__, '| PyYAML', yaml.__version__)"
 python <skill-directory>/scripts/dq.py --help
 python <skill-directory>/scripts/dq.py <some.csv>
 ```
+
+Run these with the same interpreter the agent will use. If packages can't be installed in that environment, the agent should say which one is missing and stop, rather than produce results without the engine.
 
 ### Or use git
 
@@ -263,6 +267,14 @@ Validity rule-conformance: 99.98% — 5 checks · 4 columns · 99,101 rule appli
 Those coverage numbers are worked out from the checks in the report; they don't change the JSON or the formula. **Scores from very different rule sets can't be compared directly.** 100% on two loose checks is not the same as 100% on eight strict ones.
 
 [`skills/data-quality/SKILL.md`](skills/data-quality/SKILL.md) has the default report layout and the dashboard rules. Raw JSON is for machines; only show it if someone asks.
+
+## Comprehensive assessments
+
+Testing the skill across several agents on the same synthetic file showed that the engine wasn't the weak point. Rule choice was. Given the same request for a "comprehensive" check, one agent covered almost every planted issue category and another missed more than half by a rough count, mostly because it never wrote rules for some columns. Running more checks didn't help on its own either.
+
+Since 0.4.0, `SKILL.md` asks the agent, for comprehensive requests, to walk every rule family against every column before writing YAML, to look at the real values of low-cardinality columns before writing `allowed` lists, and to keep three kinds of uniqueness and two kinds of missingness apart. Anything it chose not to check goes into a **Supported but not assessed** section of the report, with a reason. A visible gap is better than a silent one.
+
+Keep the numbers apart when reading a report. **Rule violations** are counted per check, so one bad value can fail two rules and duplicated rows repeat the same violations. **Distinct affected rows**, **duplicate extras** and **dimension rule-conformance** are each something different again. None of them can be added together or divided by a count of real defects.
 
 ## Versions and releases
 
