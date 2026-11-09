@@ -293,7 +293,7 @@ Those coverage numbers are worked out from the checks in the report; they don't 
 
 ## Comprehensive assessments
 
-Testing the skill across several agents on the same synthetic file showed that the engine wasn't the weak point. Rule choice was. Given the same request for a "comprehensive" check, one agent covered almost every planted issue category and another missed more than half by a rough count, mostly because it never wrote rules for some columns. Running more checks didn't help on its own either.
+Testing the skill across several agents on the same synthetic file showed that the engine wasn't the weak point. Rule choice was. Running more checks didn't help on its own either.
 
 That is why 0.5.0 moved rule discovery into the engine (see [Discover, review, verify](#discover-review-verify)). On top of that, `SKILL.md` asks the agent, for comprehensive requests, to walk every rule family against every column, and to keep three kinds of uniqueness and two kinds of missingness apart. Anything it chose not to check goes into a **Supported but not assessed** section of the report, with a reason. A visible gap is better than a silent one.
 
