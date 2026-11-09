@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.10–3.14 plus the dependencies in scripts/requirements.txt (XLSX needs openpyxl; Parquet needs optional pyarrow). Reads local files and one local SQLite table; no network access. CI-tested on Linux with Python 3.10–3.14.
 metadata:
   author: Abdullatif Alomair
-  version: "0.4.1"
+  version: "0.5.0"
 ---
 
 # Data Quality Skill
@@ -17,7 +17,8 @@ Profile a local dataset and check it against a small YAML rule set. Python (`scr
 Your job is to keep the data on the user's machine. The helper reads the source locally; you, the model, should only ever see what `dq.py` prints. This is a hard rule, not a preference:
 
 - **Never read, print, sample, or open the source data yourself.** No `cat`, `head`, `less`, spreadsheet viewers, ad-hoc pandas or SQL queries, or file-reading tools on the source. Every fact you use about the data comes from `dq.py` output.
-- **What reaches you is the engine's summary:** column names, counts, missing rates, inferred types, string lengths, numeric min/max/mean, rule results, and row positions. Numeric min/max/mean are real values from the data; treat them like any other data in your report.
+- **What reaches you is the engine's summary:** column names, counts, missing rates, inferred types, string lengths, numeric min/max/mean, rule results, and row positions. With `--discover` it also includes masked shapes (`ORD-9999`) and the category labels of low-cardinality text columns. Numeric min/max/mean and category labels are real values from the data; treat them like any other data in your report.
+- **`--strict-privacy`** removes numeric min/max/mean and category labels from the output and refuses raw examples. Use it when the user says the data is sensitive, or asks for the most private run.
 - **`--examples` prints raw values.** Use it only after the user explicitly agrees, and say which columns it will expose.
 - **When a rule needs knowledge you don't have** (the allowed values of a category, the exact format of an ID, a business limit), get it from the user, a source document, or a schema. If none is available, list the check under "Supported but not assessed" with that reason. Do not look at the data to fill the gap.
 - The skill cannot technically stop a host agent with file access from reading the source. If the user needs that guarantee, point them to the host's own permission settings, so that only `dq.py` can read the data folder.
@@ -34,7 +35,7 @@ Don't use for: cleansing, repairing, or altering source data (permanently out of
 
 ## Getting and installing this skill
 
-- Download the bundle: `https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip` (or pin a version with `.../releases/download/v0.4.1/data-quality-skill.zip`). The zip unpacks to a single `data-quality/` directory.
+- Download the bundle: `https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip` (or pin a version with `.../releases/download/v0.5.0/data-quality-skill.zip`). The zip unpacks to a single `data-quality/` directory.
 - Place that directory in the host's skills directory, or keep it anywhere and resolve `scripts/dq.py` relative to it. Nothing needs to be installed from this repository itself; only the runtime dependencies below.
 - Git alternative: shallow-clone the repository and copy `skills/data-quality/` out of it.
 
@@ -99,7 +100,7 @@ payload["overall"]["exit_code"]   # 0, 1, or 2
 payload["errors"]                 # [] or [{"code": ..., "message": ...}]
 ```
 
-The signature mirrors the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0)`. The CLI remains the primary contract; `run()` is the same payload as a dict, including error payloads.
+The signature mirrors the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0, discover=False, strict_privacy=False, mask_examples=False)`. The CLI remains the primary contract; `run()` is the same payload as a dict, including error payloads.
 
 ## Quick Reference
 
@@ -111,6 +112,8 @@ The signature mirrors the CLI: `dq.run(source, rules=None, *, sheet=None, table=
 | SQLite table | `python scripts/dq.py db.sqlite --table items` |
 | Other text encoding | `python scripts/dq.py data.csv --encoding cp1256` |
 | Bounded examples | append `--examples 3` (capped at 5 per check) |
+| Propose candidate rules | `python scripts/dq.py data.csv --discover` |
+| Most private output | add `--strict-privacy` (and `--mask-examples` with `--examples`) |
 
 ## Bundle scope and limits
 
@@ -125,7 +128,7 @@ Rule semantics and evidence rules are in `references/RULES.md`. This copied bund
 
 ## Procedure
 
-1. **Inspect/profile first.** Run `scripts/dq.py SOURCE` without `--rules`, then read the profile, warnings, selected sheet/table, row/column counts, and limits. Do not choose rules before this pass.
+1. **Inspect/profile first.** Run `scripts/dq.py SOURCE --discover` (or without `--discover` for a quick profile), then read the profile, warnings, selected sheet/table, row/column counts, limits, and the candidate list. Do not choose rules before this pass.
 2. **Understand the objective and context.** Read the user's question, available schema/column names, and any domain or reference context. Identify what decision the checks are meant to support.
 3. **Establish rule provenance before writing YAML.** Use three levels:
    - **Explicit constraint (confirmed):** directly required by the user, contract, standard, schema, policy, SLA, or authoritative source.
@@ -140,12 +143,24 @@ Rule semantics and evidence rules are in `references/RULES.md`. This copied bund
 9. **Interpret dimension results as rule-conformance.** A dimension percentage measures the conformance of the supplied rule applications, not intrinsic dataset cleanliness. Include coverage context in human-facing summaries: the number of checks, the number of distinct columns or scopes, and the total evaluated rule applications. A dataset can contain missing values and still have 100% completeness rule-conformance when the supplied rules allow that missingness.
 10. **Never alter the source.** Cleansing, cleaning, repair, and data alteration are permanently out of scope; suggested fixes are explanations only.
 
+## Discover, review, verify
+
+`--discover` makes the engine propose candidate rules from patterns in the data, so you review a fixed list instead of inventing rules. The same file always produces the same candidates, whichever model runs the skill. Use it for every comprehensive request, and whenever you have no rules from the user.
+
+1. **Discover.** `python scripts/dq.py SOURCE --discover > discovery.json`. Each candidate has a `rule`, a `value`, a `detector`, `evidence` (counts and masked shapes, never raw rows), and `expected` (the violations it would report). All candidates are `inferred`.
+2. **Review every candidate.** Accept, reject, or edit each one, with a one-line reason. Typical reasons to reject: an `allowed` list that dropped a rare but legitimate value, a `regex` that is only a coincidence of formats, a `unique_together` pair that is unique by chance. Typical edits: add values the user confirms to an `allowed` list, loosen a regex. A candidate becomes **confirmed** only when the user or a source states the rule.
+3. **Add what discovery cannot know.** The engine never proposes `min` or `max`: a bound read from the data's own range always passes. Bounds and any other business limits come from the user, a source, or your own judgement labelled as an inferred candidate.
+4. **Verify.** Write the accepted rules to a new YAML file (`discovery.rules` is a ready starting point), run `--rules`, and report from that run. Candidates are never scores or findings; only the verify run is.
+5. **Report the review.** Add a short **Candidates reviewed** table to the report: rule, column, decision (accepted, edited, rejected), reason.
+
+Under `--strict-privacy`, candidates whose rule would contain a data value (`allowed` lists, `conditional_required` triggers) are withheld. Ask the user for those values, or list the checks under "Supported but not assessed".
+
 ## Comprehensive assessments
 
 Benchmarks showed that the biggest source of missed issues is not the engine but which rules the agent chooses: different agents given the same file and the same "comprehensive" request picked very different subsets of the available checks, and more checks did not mean better coverage. When the user asks for a comprehensive, full, or thorough assessment, work through this before writing YAML:
 
-1. **Walk every rule family against every column.** For each column, decide whether each family applies: `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex`. For the dataset, decide on `max_duplicate_rows`, `unique_together`, and `conditional_required`. Record each as **assessed**, **not applicable**, or **supported but not assessed** with a one-line reason. Keep this inventory in your working notes; it feeds the report's "Supported but not assessed" section.
-2. **Get category values and formats from the user or a source, not from the data.** A low `distinct_nonmissing` in the profile marks a column that probably deserves an `allowed` rule, but the list itself must come from the user, a data dictionary, a schema, or a source document (see **Data privacy**). If none is available, record the check as supported but not assessed and ask the user for the list.
+1. **Start from `--discover`.** Its candidates cover most rule families automatically. Then walk every rule family against every column for what is left. For each column, decide whether each family applies: `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex`. For the dataset, decide on `max_duplicate_rows`, `unique_together`, and `conditional_required`. Record each as **assessed**, **not applicable**, or **supported but not assessed** with a one-line reason. Keep this inventory in your working notes; it feeds the report's "Supported but not assessed" section.
+2. **Get category values and formats from discovery, the user, or a source, never from reading the data.** Discovery lists category labels for low-cardinality text columns and masked shapes for the rest. If those are withheld or not enough, the list must come from the user, a data dictionary, a schema, or a source document (see **Data privacy**).
 3. **Separate the three kinds of uniqueness.** A single-column ID (`unique`), a compound key such as invoice + line number (`unique_together`), and whole-row copies (`max_duplicate_rows`) catch different problems. Consider all three.
 4. **Separate always-required fields from state-dependent ones.** Many blanks are legitimate: no closing date on an open ticket, no refund reference on a payment that was never refunded. Use `required` only where every row needs a value; use `conditional_required` when a status or flag makes a field mandatory (for example a closed ticket needs a closing date, a refunded payment needs a refund reference). Never count optional blanks as defects.
 5. **Write regexes that fit every legitimate subpopulation.** An ID or code format usually comes from the user or a source. Before anchoring it, ask whether valid values span several years, prefixes, regions, or channels (for example invoice numbers issued under two different year prefixes). A pattern built from the newest or most common variant alone flags thousands of valid rows. If a regex flags a large share of a column, treat that as a sign the pattern is wrong before calling it a data problem.
@@ -181,6 +196,7 @@ After the deterministic run, produce this concise report by default. Do not dump
    - Keep failures from **source-informed candidates** and **inferred candidates** separate from confirmed findings.
    - For each candidate, state its provenance level, rule, column or scope, deterministic result, rationale, evidence/source, uncertainty, and bounded row evidence where available.
    - Candidate findings are hypotheses for review, not confirmed business requirements.
+   - When `--discover` was used, add a short **Candidates reviewed** table: rule, column, decision (accepted, edited, rejected), reason.
 5. **Supported but not assessed**
    - List plausible, high-value checks the engine supports that you did not run, each with its reason: no authority to call it a requirement, unclear semantics, or an execution constraint.
    - Reporting a gap is better than guessing. For comprehensive assessments this section comes from the coverage inventory.

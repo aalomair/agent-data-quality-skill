@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. Versions are git tags and GitHub releases; this is not a Python package.
 
+## [0.5.0] — 2026-11-09
+
+The engine can now propose rules itself, so the model reviews a fixed list instead of inventing rules, without seeing raw rows. Without the new flags, output is byte-identical to 0.4.1.
+
+- `--discover` adds a `discovery` section: per-column masked shapes and parse counts, category labels for low-cardinality text columns, and deterministic candidate rules for `max_duplicate_rows`, `unique_together`, `conditional_required`, `required`, `unique`, `type`, `allowed` and `regex`. Each candidate carries its evidence and `expected` result. `min` and `max` are never proposed. A combined `rules` document is ready to edit and run.
+- `--strict-privacy` removes numeric min/max/mean and category labels from the output, withholds candidates that would contain data values, and refuses raw `--examples`.
+- `--mask-examples` prints example values as masked shapes.
+- `dq.run()` takes matching `discover`, `strict_privacy` and `mask_examples` keyword arguments.
+- `SKILL.md`: the default workflow is now discover → review → verify, with a **Candidates reviewed** table in the report.
+- The search over column pairs and state columns stops at a fixed cell budget in a fixed order, and reports how much it examined.
+
 ## [0.4.1] — 2026-11-09
 
 Privacy fix. The engine, rules, and JSON output are unchanged.

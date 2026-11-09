@@ -490,7 +490,7 @@ def _versions() -> dict[str, str]:
 
 def test_version_is_consistent_everywhere():
     versions = _versions()
-    assert set(versions.values()) == {"0.4.1"}, versions
+    assert set(versions.values()) == {"0.5.0"}, versions
 
 
 def test_no_document_calls_the_version_unreleased_or_is_pip_installable():

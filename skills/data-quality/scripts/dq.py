@@ -10,7 +10,12 @@ configuration, or execution error.
 
 Usage:
     python dq.py SOURCE [--rules rules.yml] [--sheet NAME] [--table NAME]
-                 [--encoding NAME] [--examples N]
+                 [--encoding NAME] [--examples N] [--mask-examples]
+                 [--discover] [--strict-privacy]
+
+--discover proposes candidate rules from patterns in the data (masked shapes,
+counts, low-cardinality labels); it never applies them. --strict-privacy keeps
+real values out of the output entirely.
 
 The helper never writes to the inspected source, opens no network sockets,
 and makes no model calls. Source data is permanently read-only; cleansing,
@@ -59,7 +64,7 @@ except ImportError:  # pragma: no cover - exercised in a dependency-free venv
     yaml = None  # type: ignore[assignment]
     _MISSING_DEPENDENCIES.append("yaml")
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 SCHEMA_VERSION = "1.0"
 
 # Conservative limits; oversized sources are rejected, never truncated.
@@ -956,6 +961,11 @@ def load_rules(path: Path, columns: list[str]) -> dict:
         raise DqError("invalid_rules", f"invalid YAML in rules file: {exc}")
     if document is None:
         raise DqError("invalid_rules", "empty rules file: no rules defined")
+    return normalise_rules(document, columns)
+
+
+def normalise_rules(document: Any, columns: list[str]) -> dict:
+    """Validate a parsed rules document and return the normalised form."""
     if not isinstance(document, dict):
         raise DqError(
             "invalid_rules",
@@ -1588,6 +1598,420 @@ def run_checks(loaded: Loaded, rules: dict, examples_requested: int) -> list[dic
 
 
 # ---------------------------------------------------------------------------
+# Discovery (--discover)
+# ---------------------------------------------------------------------------
+#
+# Discovery proposes candidate rules from patterns in the data. It reads the
+# real values locally but only emits counts, masked shapes and (for
+# low-cardinality text columns, unless --strict-privacy) category labels.
+# Every threshold is a fixed constant, so the same file always yields the same
+# candidates. Candidates are proposals labelled "inferred"; they are never
+# scored. Bounds (min/max) are never proposed: a bound read from the data's
+# own range always passes.
+
+DISCOVERY_SETTINGS = {
+    "min_values": 20,             # a column needs this many non-missing values
+    "type_min_share": 0.95,       # share that must parse as integer/number
+    "shape_min_share": 0.95,      # share the dominant shapes must cover
+    "shape_max_patterns": 3,      # at most this many shapes in one regex
+    "shape_min_count": 3,         # shapes rarer than this are never listed
+    "shape_list_limit": 20,       # shapes listed per column
+    "shape_max_chars": 60,        # longer shapes are truncated in evidence
+    "category_max_distinct": 30,  # low-cardinality limit for `allowed`
+    "category_rare_share": 0.01,  # values under this share are left out of `allowed`
+    "unique_min_share": 0.98,     # distinct / non-missing for `unique`
+    "pair_min_share": 0.98,       # distinct keys / rows for `unique_together`
+    "pair_max_evaluated": 300,    # column pairs examined, in a fixed order
+    "search_cell_budget": 20_000_000,  # cells read by the pair and state searches
+    "pair_max_candidates": 3,
+    "conditional_min_rows": 10,   # rows needed in and out of a state
+    "conditional_fill_in": 0.90,  # fill rate required inside the state
+    "conditional_fill_out": 0.10, # fill rate allowed outside the state
+    "required_max_missing_share": 0.05,
+}
+
+_SHAPE_CLASSES = {"A": "[A-Z]", "a": "[a-z]", "9": r"\d", "L": r"[^\W\d_]", " ": r"\s"}
+
+
+def shape_of(value: Any) -> str:
+    """Mask a value: A-Z -> A, a-z -> a, digits -> 9, other letters -> L,
+    whitespace -> space; punctuation and symbols are kept as they are."""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for character in text:
+        if character.isdigit():
+            out.append("9")
+        elif character.isascii() and character.isalpha():
+            out.append("A" if character.isupper() else "a")
+        elif character.isalpha():
+            out.append("L")
+        elif character.isspace():
+            out.append(" ")
+        else:
+            out.append(character)
+    return "".join(out)
+
+
+def _runs(shape: str) -> list[tuple[str, int]]:
+    runs: list[tuple[str, int]] = []
+    for character in shape:
+        if runs and runs[-1][0] == character:
+            runs[-1] = (character, runs[-1][1] + 1)
+        else:
+            runs.append((character, 1))
+    return runs
+
+
+def collapsed_shape(shape: str) -> str:
+    """Collapse runs of the same class: `aaaa@aaa.aa` -> `a+@a+.a+`."""
+    return "".join(
+        f"{char}+" if char in _SHAPE_CLASSES else char * count
+        for char, count in _runs(shape)
+    )
+
+
+def _shape_regex(shape: str, collapsed: bool) -> str:
+    parts = []
+    if collapsed:
+        index = 0
+        while index < len(shape):
+            char = shape[index]
+            if char in _SHAPE_CLASSES and shape[index + 1:index + 2] == "+":
+                parts.append(_SHAPE_CLASSES[char] + "+")
+                index += 2
+            else:
+                parts.append(re.escape(char))
+                index += 1
+    else:
+        for char, count in _runs(shape):
+            if char in _SHAPE_CLASSES:
+                parts.append(_SHAPE_CLASSES[char] + ("" if count == 1 else f"{{{count}}}"))
+            else:
+                parts.append(re.escape(char * count))
+    return "".join(parts)
+
+
+def _evidence_shape(shape: str) -> str:
+    limit = DISCOVERY_SETTINGS["shape_max_chars"]
+    return shape if len(shape) <= limit else shape[:limit - 1] + "…"
+
+
+def _ranked(counter: dict) -> list[tuple[Any, int]]:
+    return sorted(counter.items(), key=lambda item: (-item[1], str(item[0])))
+
+
+def _column_facts(values: list[Any], gone: list[bool], keys: list[tuple]) -> dict:
+    present = [value for value, is_gone in zip(values, gone) if not is_gone]
+    strings = [value for value in present if isinstance(value, str)]
+    integers = sum(1 for value in present if _matches_type(value, "integer"))
+    numbers = sum(1 for value in present if _matches_type(value, "number"))
+    counts: dict = {}
+    for key, is_gone in zip(keys, gone):
+        if not is_gone:
+            counts[key] = counts.get(key, 0) + 1
+    shapes: dict[str, int] = {}
+    for value in strings:
+        key = shape_of(value)
+        shapes[key] = shapes.get(key, 0) + 1
+    return {
+        "present": present,
+        "strings": strings,
+        "integers": integers,
+        "numbers": numbers,
+        "counts": counts,
+        "shapes": shapes,
+    }
+
+
+def _key_value(key: tuple) -> Any:
+    return key[1] if len(key) > 1 else None
+
+
+def discover(loaded: Loaded, strict_privacy: bool) -> dict:
+    cfg = DISCOVERY_SETTINGS
+    columns = loaded.columns
+    rows = loaded.rows
+    total = len(rows)
+    cells = [[row[i] for row in rows] for i in range(len(columns))]
+    missing = [[is_missing(value) for value in column] for column in cells]
+    keycols = [[value_key(value) for value in column] for column in cells]
+    facts = [_column_facts(cells[i], missing[i], keycols[i]) for i in range(len(columns))]
+
+    column_evidence = []
+    column_candidates: dict[str, dict] = {}
+    numeric_cols: set[int] = set()
+    category_cols: list[int] = []
+    unique_cols: set[int] = set()
+    non_integer_numeric: set[int] = set()
+
+    def add(column: str, rule: str, value: Any, detector: str, evidence: dict,
+            withheld: bool = False) -> None:
+        column_candidates.setdefault(column, {})[rule] = (value, detector, evidence, withheld)
+
+    for index, name in enumerate(columns):
+        fact = facts[index]
+        present = len(fact["present"])
+        enough = present >= cfg["min_values"]
+        evidence: dict = {
+            "name": name,
+            "nonmissing": present,
+            "parse": {"integer": fact["integers"], "number": fact["numbers"],
+                      "not_numeric": present - fact["numbers"]},
+        }
+
+        # type
+        type_rule = None
+        if enough:
+            if fact["integers"] / present >= cfg["type_min_share"]:
+                type_rule = "integer"
+            elif fact["numbers"] / present >= cfg["type_min_share"]:
+                type_rule = "number"
+                non_integer_numeric.add(index)
+        if type_rule:
+            numeric_cols.add(index)
+            add(name, "type", type_rule, "parse_rate",
+                {"parsed": fact["integers"] if type_rule == "integer" else fact["numbers"],
+                 "nonmissing": present})
+
+        # required
+        missing_count = total - present
+        if total >= cfg["min_values"] and 0 < missing_count <= cfg["required_max_missing_share"] * total:
+            add(name, "required", True, "mostly_filled",
+                {"missing": missing_count, "rows": total})
+
+        # allowed (low-cardinality text)
+        distinct = len(fact["counts"])
+        values_evidence = None
+        if (enough and index not in numeric_cols
+                and distinct <= cfg["category_max_distinct"]
+                and distinct * 5 <= present):
+            ranked = _ranked(fact["counts"])
+            floor = max(cfg["shape_min_count"], math.ceil(cfg["category_rare_share"] * present))
+            keep = [key for key, count in ranked if count >= floor]
+            if keep:
+                category_cols.append(index)
+                if strict_privacy:
+                    values_evidence = [{"shape": _evidence_shape(shape_of(_key_value(key))),
+                                        "count": count, "kept": count >= floor}
+                                       for key, count in ranked]
+                else:
+                    values_evidence = [{"value": _key_value(key), "count": count,
+                                        "kept": count >= floor} for key, count in ranked]
+                add(name, "allowed", [_key_value(key) for key in keep], "low_cardinality",
+                    {"distinct": distinct, "rare_floor": floor,
+                     "values_left_out": distinct - len(keep)},
+                    withheld=strict_privacy)
+        evidence["values"] = values_evidence
+
+        # unique
+        if (enough and index not in non_integer_numeric
+                and distinct / present >= cfg["unique_min_share"]):
+            unique_cols.add(index)
+            add(name, "unique", True, "near_unique",
+                {"distinct": distinct, "nonmissing": present,
+                 "repeated_values": present - distinct})
+
+        # shapes
+        shape_rank = _ranked(fact["shapes"])
+        listed = [{"shape": _evidence_shape(shape), "count": count}
+                  for shape, count in shape_rank if count >= cfg["shape_min_count"]]
+        listed = listed[:cfg["shape_list_limit"]]
+        evidence["shapes"] = listed
+        evidence["shapes_not_listed"] = {
+            "shapes": len(shape_rank) - len(listed),
+            "values": len(fact["strings"]) - sum(item["count"] for item in listed),
+        }
+        strings = len(fact["strings"])
+        if (strings >= cfg["min_values"] and index not in numeric_cols
+                and index not in category_cols):
+            floor = max(cfg["shape_min_count"], math.ceil(cfg["category_rare_share"] * strings))
+            for collapsed in (False, True):
+                if collapsed:
+                    counter: dict[str, int] = {}
+                    for shape, count in fact["shapes"].items():
+                        key = collapsed_shape(shape)
+                        counter[key] = counter.get(key, 0) + count
+                    ranking = _ranked(counter)
+                else:
+                    ranking = shape_rank
+                top = [(shape, count) for shape, count in ranking[:cfg["shape_max_patterns"]]
+                       if count >= floor]
+                covered = sum(count for _, count in top)
+                if top and covered / strings >= cfg["shape_min_share"]:
+                    patterns = [_shape_regex(shape, collapsed) for shape, _ in top]
+                    regex = patterns[0] if len(patterns) == 1 else \
+                        "(?:" + "|".join(patterns) + ")"
+                    add(name, "regex", regex, "dominant_shape",
+                        {"shapes": [{"shape": _evidence_shape(shape), "count": count}
+                                    for shape, count in top],
+                         "collapsed": collapsed, "covered": covered, "strings": strings})
+                    break
+        column_evidence.append(evidence)
+
+    dataset: dict = {}
+    dataset_meta: dict = {}
+
+    # whole-row duplicates
+    row_keys: set = set()
+    duplicate_rows = 0
+    for key in zip(*keycols):
+        if key in row_keys:
+            duplicate_rows += 1
+        else:
+            row_keys.add(key)
+    if duplicate_rows:
+        dataset["max_duplicate_rows"] = 0
+        dataset_meta["max_duplicate_rows"] = ("whole_row_duplicates",
+                                              {"duplicate_rows": duplicate_rows}, False)
+
+    # unique_together
+    distinct_of = [len(fact["counts"]) for fact in facts]
+    eligible = [
+        index for index in range(len(columns))
+        if index not in unique_cols and index not in non_integer_numeric
+        and distinct_of[index] >= 2
+        and total and (total - sum(missing[index])) >= max(cfg["min_values"], 0.95 * total)
+    ]
+    eligible.sort(key=lambda index: (-distinct_of[index], index))
+    pairs = [(a, b) for pos, a in enumerate(eligible) for b in eligible[pos + 1:]
+             if distinct_of[a] * distinct_of[b] >= total]
+    pair_limit = min(cfg["pair_max_evaluated"],
+                     max(1, cfg["search_cell_budget"] // max(1, total)))
+    evaluated_pairs = pairs[:pair_limit]
+    found = []
+    for a, b in evaluated_pairs:
+        keys = [(ka, kb) for ka, kb, ma, mb
+                in zip(keycols[a], keycols[b], missing[a], missing[b]) if not ma and not mb]
+        if len(keys) < cfg["min_values"]:
+            continue
+        distinct_keys = len(set(keys))
+        if distinct_keys / len(keys) >= cfg["pair_min_share"]:
+            first, second = sorted((a, b))
+            found.append((distinct_of[a] * distinct_of[b], first, second,
+                          len(keys), distinct_keys))
+    found.sort()
+    pair_groups = []
+    for _, first, second, evaluated, distinct_keys in found[:cfg["pair_max_candidates"]]:
+        group = [columns[first], columns[second]]
+        pair_groups.append((group, {"rows": evaluated, "distinct_keys": distinct_keys,
+                                    "repeated_key_rows": evaluated - distinct_keys}))
+    if pair_groups:
+        dataset["unique_together"] = [group for group, _ in pair_groups]
+
+    # conditional_required
+    conditionals = []
+    states = sorted(category_cols, key=lambda index: (distinct_of[index], index))
+    state_limit = max(1, cfg["search_cell_budget"] // max(1, total * len(columns)))
+    evaluated_states = states[:state_limit]
+    for state in sorted(evaluated_states):
+        state_keys = [None if is_gone else key
+                      for key, is_gone in zip(keycols[state], missing[state])]
+        state_counts: dict = {}
+        for key in state_keys:
+            if key is not None:
+                state_counts[key] = state_counts.get(key, 0) + 1
+        state_present = sum(state_counts.values())
+        for target in range(len(columns)):
+            if target == state:
+                continue
+            filled: dict = {}
+            for state_key, is_gone in zip(state_keys, missing[target]):
+                if state_key is not None and not is_gone:
+                    filled[state_key] = filled.get(state_key, 0) + 1
+            filled_total = sum(filled.values())
+            for key, count_in in _ranked(state_counts):
+                count_out = state_present - count_in
+                if (count_in < cfg["conditional_min_rows"]
+                        or count_out < cfg["conditional_min_rows"]):
+                    continue
+                filled_in = filled.get(key, 0)
+                filled_out = filled_total - filled_in
+                if (filled_in / count_in >= cfg["conditional_fill_in"]
+                        and filled_out / count_out <= cfg["conditional_fill_out"]):
+                    conditionals.append((state, key, target, {
+                        "state_rows": count_in, "filled_in_state": filled_in,
+                        "other_rows": count_out, "filled_outside_state": filled_out}))
+    if conditionals:
+        dataset["conditional_required"] = [
+            {"when": {"column": columns[state], "equals": _key_value(key)},
+             "then_required": columns[target]}
+            for state, key, target, _ in conditionals
+        ]
+
+    # assemble candidates in rule-output order
+    candidates = []
+
+    def expected(document: dict) -> dict:
+        checks = run_checks(loaded, normalise_rules(document, columns), 0)
+        check = checks[0]
+        return {"evaluated": check["evaluated"], "violations": check["violations"]}
+
+    if "max_duplicate_rows" in dataset:
+        detector, evidence, _ = dataset_meta["max_duplicate_rows"]
+        candidates.append({"rule": "max_duplicate_rows", "scope": "dataset", "column": None,
+                           "columns": None, "value": 0, "detector": detector,
+                           "evidence": evidence, "withheld": False,
+                           "expected": expected({"dataset": {"max_duplicate_rows": 0}})})
+    for group, evidence in pair_groups:
+        candidates.append({"rule": "unique_together", "scope": "dataset", "column": None,
+                           "columns": group, "value": group, "detector": "near_unique_pair",
+                           "evidence": evidence, "withheld": False,
+                           "expected": expected({"dataset": {"unique_together": [group]}})})
+    for (state, key, target, evidence), entry in zip(conditionals,
+                                                      dataset.get("conditional_required", [])):
+        if strict_privacy:
+            evidence = dict(evidence, state_value_shape=_evidence_shape(shape_of(_key_value(key))))
+        candidates.append({"rule": "conditional_required", "scope": "dataset", "column": None,
+                           "columns": [columns[state], columns[target]],
+                           "value": None if strict_privacy else entry,
+                           "detector": "state_dependent_field", "evidence": evidence,
+                           "withheld": strict_privacy,
+                           "expected": expected({"dataset": {"conditional_required": [entry]}})})
+    for name in columns:
+        for rule in RULE_ORDER:
+            if rule not in column_candidates.get(name, {}):
+                continue
+            value, detector, evidence, withheld = column_candidates[name][rule]
+            candidates.append({"rule": rule, "scope": "column", "column": name,
+                               "columns": None, "value": None if withheld else value,
+                               "detector": detector, "evidence": evidence,
+                               "withheld": withheld,
+                               "expected": expected({"columns": {name: {rule: value}}})})
+    for number, candidate in enumerate(candidates, start=1):
+        candidate["id"] = f"c{number}"
+        candidate["provenance"] = "inferred"
+
+    rules_document: dict = {}
+    for candidate in candidates:
+        if candidate["withheld"]:
+            continue
+        if candidate["scope"] == "dataset":
+            section = rules_document.setdefault("dataset", {})
+            if candidate["rule"] == "max_duplicate_rows":
+                section["max_duplicate_rows"] = 0
+            else:
+                section.setdefault(candidate["rule"], []).append(candidate["value"])
+        else:
+            rules_document.setdefault("columns", {}).setdefault(
+                candidate["column"], {})[candidate["rule"]] = candidate["value"]
+
+    ordered = [{key: candidate[key] for key in
+                ("id", "rule", "scope", "column", "columns", "value", "withheld",
+                 "provenance", "detector", "evidence", "expected")}
+               for candidate in candidates]
+    return {
+        "settings": dict(cfg),
+        "strict_privacy": strict_privacy,
+        "search": {"pairs_eligible": len(pairs), "pairs_evaluated": len(evaluated_pairs),
+                   "state_columns_eligible": len(states),
+                   "state_columns_evaluated": len(evaluated_states)},
+        "columns": column_evidence,
+        "candidates": ordered,
+        "rules": rules_document,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
@@ -1733,6 +2157,21 @@ def parse_args(argv: list[str]):
         default=0,
         help=f"include up to {MAX_EXAMPLES} example values per check (default 0)",
     )
+    parser.add_argument(
+        "--mask-examples",
+        action="store_true",
+        help="show --examples as masked shapes (ORD-9999) instead of raw values",
+    )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="propose candidate rules from patterns in the data (no rules applied)",
+    )
+    parser.add_argument(
+        "--strict-privacy",
+        action="store_true",
+        help="omit numeric min/max/mean and category labels; refuse raw examples",
+    )
     return parser.parse_args(argv)
 
 
@@ -1753,11 +2192,19 @@ def inspect(
     table: str | None,
     encoding: str | None,
     examples: int,
+    discover_rules: bool = False,
+    strict_privacy: bool = False,
+    mask_examples: bool = False,
 ) -> tuple[dict, int]:
     if _MISSING_DEPENDENCIES:
         raise DqError("missing_dependency", _missing_dependency_message())
     if examples < 0:
         raise DqError("invalid_option", "--examples must be zero or a positive integer")
+    if strict_privacy and examples > 0 and not mask_examples:
+        raise DqError(
+            "invalid_option",
+            "--strict-privacy refuses raw --examples; add --mask-examples to show shapes",
+        )
     examples_requested = min(examples, MAX_EXAMPLES)
 
     path = Path(source_arg)
@@ -1821,8 +2268,22 @@ def inspect(
         rules_path = str(Path(rules_arg))
         rules = load_rules(Path(rules_arg), loaded.columns)
         checks = run_checks(loaded, rules, examples_requested)
+        if mask_examples:
+            for check in checks:
+                if "examples" in check:
+                    masked: list[str] = []
+                    for value in check["examples"]:
+                        shape = shape_of(value)
+                        if shape not in masked:
+                            masked.append(shape)
+                    check["examples"] = masked
 
-    return build_payload(
+    if strict_privacy:
+        for column_profile in profile["column_profiles"]:
+            if column_profile["numeric"] is not None:
+                column_profile["numeric"].update(min=None, max=None, mean=None)
+
+    payload, exit_code = build_payload(
         path=path,
         fmt=fmt,
         size_bytes=size_bytes,
@@ -1833,6 +2294,15 @@ def inspect(
         checks=checks,
         warnings=warnings,
     )
+    if discover_rules or strict_privacy or mask_examples:
+        payload["options"] = {
+            "discover": discover_rules,
+            "strict_privacy": strict_privacy,
+            "mask_examples": mask_examples,
+        }
+    if discover_rules:
+        payload["discovery"] = discover(loaded, strict_privacy)
+    return payload, exit_code
 
 
 def run(
@@ -1843,6 +2313,9 @@ def run(
     table: str | None = None,
     encoding: str | None = None,
     examples: int = 0,
+    discover: bool = False,
+    strict_privacy: bool = False,
+    mask_examples: bool = False,
 ) -> dict:
     """Return the CLI's report payload for one inspection; never raises.
 
@@ -1859,6 +2332,9 @@ def run(
             table=table,
             encoding=encoding,
             examples=examples,
+            discover_rules=discover,
+            strict_privacy=strict_privacy,
+            mask_examples=mask_examples,
         )
     except DqError as exc:
         payload = error_payload(exc.code, exc.message)
@@ -1884,6 +2360,9 @@ def main(argv: list[str] | None = None) -> int:
             table=args.table,
             encoding=args.encoding,
             examples=args.examples,
+            discover=args.discover,
+            strict_privacy=args.strict_privacy,
+            mask_examples=args.mask_examples,
         )
         exit_code = payload["overall"]["exit_code"]
     try:

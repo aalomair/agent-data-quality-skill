@@ -2,7 +2,7 @@
 
 An [Agent Skill](https://agentskills.io/specification) that lets an AI agent check the quality of a local dataset without guessing at the numbers.
 
-**Version 0.4.1** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
+**Version 0.5.0** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
 
 ## Why this exists
 
@@ -23,7 +23,7 @@ curl -fsSL -o data-quality-skill.zip \
   https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip
 
 # or pin this exact version:
-# https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.4.1/data-quality-skill.zip
+# https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.5.0/data-quality-skill.zip
 ```
 
 ```bash
@@ -185,7 +185,7 @@ payload = dq.run("customers.csv", "rules.yml")
 payload["overall"]["exit_code"]  # 0, 1, or 2
 ```
 
-The arguments match the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0)`. The CLI's JSON is still the main contract.
+The arguments match the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0, discover=False, strict_privacy=False, mask_examples=False)`. The CLI's JSON is still the main contract.
 
 ## What's in the repo
 
@@ -208,6 +208,31 @@ benchmark/run.py               defect-injection benchmark (UCI Adult, plus ERPNe
 benchmark/public/              UCI Adult data (CC BY 4.0), its notice, and rules
 benchmark/private/             local-only datasets (gitignored)
 ```
+
+## Discover, review, verify
+
+Since 0.5.0 the engine can propose the rules itself:
+
+```bash
+python <skill-directory>/scripts/dq.py orders.csv --discover > discovery.json
+```
+
+It looks for patterns and turns each into a candidate rule with the evidence behind it:
+
+| It notices | It proposes |
+|---|---|
+| exact duplicate rows | `max_duplicate_rows: 0` |
+| two columns that together are almost always unique | `unique_together` |
+| a field that is filled when a status has one value and empty otherwise | `conditional_required` |
+| a column that is almost never empty | `required` |
+| a column that is almost always distinct | `unique` |
+| a column that almost always parses as a number | `type` |
+| a text column with a handful of values | `allowed`, leaving out the rare ones |
+| a text column where almost every value has the same shape (`ORD-9999-999999`) | `regex` |
+
+Every candidate is labelled *inferred* and carries `expected`: what it would report if you ran it now. The agent's job changes from inventing rules to reviewing a list: accept, reject or edit each one, add the business limits only a person knows (the engine never guesses `min` or `max`), then run the accepted rules with `--rules`. Scores only ever come from that last run.
+
+Because the same file always gives the same candidates, two different models start from the same place. On the synthetic retail file from my benchmark, discovery alone proposes 47 candidates in about two seconds, including the duplicate rows, the order-plus-line key, and the cancelled and returned orders with no reason.
 
 ## Supported inputs
 
@@ -288,6 +313,7 @@ Release notes are in [CHANGELOG.md](CHANGELOG.md), and the newest release is alw
 
 ## Limits
 
+- `--discover` reads every value and searches column pairs and status columns up to a fixed budget. On a 200,000-row file it takes around half a minute; the output says how much of the search it covered.
 - Files over **50 MiB** or **200,000 rows** are rejected with exit code 2. They're never sampled or partially read and then reported as if complete. Reading is bounded per format where possible, but there's no streaming and no hard memory guarantee.
 - One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected; data is never truncated, shifted or quietly dropped.
 - Text defaults to strict UTF-8 (a BOM is fine). `--encoding NAME` lets you use another encoding, still strictly, with no lossy replacement and no auto-detection.
@@ -302,9 +328,12 @@ That output contains:
 - column names, row and column counts, missing and distinct counts, inferred types and string lengths;
 - **numeric min, max and mean**, which are real values from your data;
 - rule results and row positions (line numbers, not contents);
-- raw example values, **only** if you run with `--examples`, which the agent must ask you about first.
+- raw example values, **only** if you run with `--examples`, which the agent must ask you about first;
+- with `--discover`, masked shapes (`ORD-9999-999999`, never the values) and the labels of columns with a few distinct text values, such as a status column.
 
-It never contains whole rows or arbitrary cell values.
+For sensitive data, `--strict-privacy` drops numeric min/max/mean and the category labels, and refuses raw examples. `--mask-examples` shows examples as shapes instead of values.
+
+It never contains whole rows, and high-cardinality columns such as names or emails only ever appear as shapes.
 
 Two honest limits. First, the skill can instruct the agent but can't technically stop an agent that has file access from opening the file anyway. If you need a guarantee, use your agent host's permission settings to block reads of the data folder, so only the script can see it. Second, rules that depend on knowing the data, like the allowed values of a status column or the exact format of an ID, need to come from you or from documentation. When they don't, the agent lists the check as not assessed rather than peeking.
 

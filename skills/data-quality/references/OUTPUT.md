@@ -191,6 +191,37 @@ Empty on success. In an error report there is one object, `{code, message}`, and
 | 1 | At least one rule violation. |
 | 2 | Input, configuration, dependency, or execution error; the JSON document carries the reason. Errors take precedence. |
 
+## Optional sections (v0.5.0)
+
+These appear **only** when the matching flag is passed. Without the flags, the report is byte-identical to v0.4.1.
+
+### `options`
+
+Present when `--discover`, `--strict-privacy` or `--mask-examples` is used: `{"discover": bool, "strict_privacy": bool, "mask_examples": bool}`.
+
+### `--strict-privacy` effects
+
+- Every `profile.column_profiles[].numeric` keeps `count` but sets `min`, `max` and `mean` to `null`.
+- `--examples` without `--mask-examples` is refused with `invalid_option` (exit 2).
+- In `discovery`, category labels are replaced by shapes, and candidates whose rule would contain a data value (`allowed`, `conditional_required`) are `withheld`: `value` is `null`.
+
+### `--mask-examples`
+
+Each check's `examples` list holds masked shapes instead of raw values, deduplicated after masking. Masking: ASCII upper-case letters → `A`, lower-case → `a`, digits → `9`, other letters → `L`, whitespace → space; punctuation and symbols are kept.
+
+### `discovery`
+
+Present with `--discover`. Discovery proposes rules; it never applies them, so `checks` stays empty unless `--rules` is also given.
+
+- `settings`: every threshold used, as fixed numbers.
+- `strict_privacy`: whether labels were withheld.
+- `search`: how many column pairs and state columns were eligible and how many were examined. Both searches stop at a fixed cell budget, in a fixed order.
+- `columns[]`: per column, `name`, `nonmissing`, `parse` (`integer`, `number`, `not_numeric` counts), `values` (low-cardinality text columns only: `value` or, under strict privacy, `shape`, plus `count` and `kept`; otherwise `null`), `shapes` (masked shapes seen at least 3 times, top 20, each with `count`), and `shapes_not_listed` (`shapes`, `values`).
+- `candidates[]`: `id` (`c1`…), `rule`, `scope`, `column` (column rules) or `columns` (dataset rules), `value` (the YAML value for that rule, or `null` when withheld), `withheld`, `provenance` (always `inferred`), `detector`, `evidence` (detector-specific counts), and `expected` (`evaluated`, `violations`: what that one rule would report if run now).
+- `rules`: a rules document built from every non-withheld candidate, in the normal YAML structure. Save it, edit it, then run it with `--rules`.
+
+Detectors: `whole_row_duplicates` → `max_duplicate_rows: 0`; `near_unique_pair` → `unique_together`; `state_dependent_field` → `conditional_required`; `mostly_filled` → `required`; `near_unique` → `unique`; `parse_rate` → `type`; `low_cardinality` → `allowed` (values below the rare floor are left out, so they would be flagged); `dominant_shape` → `regex`. `min` and `max` are never proposed.
+
 ## Field index (machine-checked)
 
 The lists below are parsed by the test suite, so they cannot drift from the engine.
@@ -214,4 +245,10 @@ check_status: passed, failed, not_evaluated
 overall_status: inspected, passed, failed, error
 error_codes: usage, invalid_option, incompatible_option, source_not_found, invalid_source, unsupported_source, unsupported_format, size_limit, row_limit, decode_error, malformed_source, not_found, rules_not_found, invalid_rules, missing_dependency, internal_error
 exit_codes: 0, 1, 2
+optional_top_level: options, discovery
+options: discover, strict_privacy, mask_examples
+discovery: settings, strict_privacy, search, columns, candidates, rules
+discovery_search: pairs_eligible, pairs_evaluated, state_columns_eligible, state_columns_evaluated
+discovery_column: name, nonmissing, parse, values, shapes, shapes_not_listed
+candidate: id, rule, scope, column, columns, value, withheld, provenance, detector, evidence, expected
 ```
