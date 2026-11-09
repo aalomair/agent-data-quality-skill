@@ -59,7 +59,7 @@ except ImportError:  # pragma: no cover - exercised in a dependency-free venv
     yaml = None  # type: ignore[assignment]
     _MISSING_DEPENDENCIES.append("yaml")
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 SCHEMA_VERSION = "1.0"
 
 # Conservative limits; oversized sources are rejected, never truncated.

@@ -5,12 +5,22 @@ license: MIT
 compatibility: Requires Python 3.10–3.14 plus the dependencies in scripts/requirements.txt (XLSX needs openpyxl; Parquet needs optional pyarrow). Reads local files and one local SQLite table; no network access. CI-tested on Linux with Python 3.10–3.14.
 metadata:
   author: Abdullatif Alomair
-  version: "0.4.0"
+  version: "0.4.1"
 ---
 
 # Data Quality Skill
 
 Profile a local dataset and check it against a small YAML rule set. Python (`scripts/dq.py`) does all reading, counting, and checking deterministically; you (the host agent) interpret the objective, decide which rules are justified, and write a concise human-facing report. Source data is permanently read-only: the helper makes no model or network calls and never alters the inspected data.
+
+## Data privacy
+
+Your job is to keep the data on the user's machine. The helper reads the source locally; you, the model, should only ever see what `dq.py` prints. This is a hard rule, not a preference:
+
+- **Never read, print, sample, or open the source data yourself.** No `cat`, `head`, `less`, spreadsheet viewers, ad-hoc pandas or SQL queries, or file-reading tools on the source. Every fact you use about the data comes from `dq.py` output.
+- **What reaches you is the engine's summary:** column names, counts, missing rates, inferred types, string lengths, numeric min/max/mean, rule results, and row positions. Numeric min/max/mean are real values from the data; treat them like any other data in your report.
+- **`--examples` prints raw values.** Use it only after the user explicitly agrees, and say which columns it will expose.
+- **When a rule needs knowledge you don't have** (the allowed values of a category, the exact format of an ID, a business limit), get it from the user, a source document, or a schema. If none is available, list the check under "Supported but not assessed" with that reason. Do not look at the data to fill the gap.
+- The skill cannot technically stop a host agent with file access from reading the source. If the user needs that guarantee, point them to the host's own permission settings, so that only `dq.py` can read the data folder.
 
 Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Hermes has been tested end-to-end with this skill. Codex and Claude Code are format-compatible, but this repository has not harness-tested them.
 
@@ -24,7 +34,7 @@ Don't use for: cleansing, repairing, or altering source data (permanently out of
 
 ## Getting and installing this skill
 
-- Download the bundle: `https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip` (or pin a version with `.../releases/download/v0.4.0/data-quality-skill.zip`). The zip unpacks to a single `data-quality/` directory.
+- Download the bundle: `https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip` (or pin a version with `.../releases/download/v0.4.1/data-quality-skill.zip`). The zip unpacks to a single `data-quality/` directory.
 - Place that directory in the host's skills directory, or keep it anywhere and resolve `scripts/dq.py` relative to it. Nothing needs to be installed from this repository itself; only the runtime dependencies below.
 - Git alternative: shallow-clone the repository and copy `skills/data-quality/` out of it.
 
@@ -135,10 +145,10 @@ Rule semantics and evidence rules are in `references/RULES.md`. This copied bund
 Benchmarks showed that the biggest source of missed issues is not the engine but which rules the agent chooses: different agents given the same file and the same "comprehensive" request picked very different subsets of the available checks, and more checks did not mean better coverage. When the user asks for a comprehensive, full, or thorough assessment, work through this before writing YAML:
 
 1. **Walk every rule family against every column.** For each column, decide whether each family applies: `required`, `max_null_pct`, `unique`, `type`, `min`, `max`, `allowed`, `regex`. For the dataset, decide on `max_duplicate_rows`, `unique_together`, and `conditional_required`. Record each as **assessed**, **not applicable**, or **supported but not assessed** with a one-line reason. Keep this inventory in your working notes; it feeds the report's "Supported but not assessed" section.
-2. **Look at the actual values of low-cardinality columns before writing `allowed` or `regex`.** The profile gives `distinct_nonmissing`; when it is small (roughly 30 or fewer), list the distinct values with a quick read-only look at the file so that rare misspellings, odd casing, and stray codes become visible. Reading values to author rules is fine; counting violations stays with `dq.py`.
+2. **Get category values and formats from the user or a source, not from the data.** A low `distinct_nonmissing` in the profile marks a column that probably deserves an `allowed` rule, but the list itself must come from the user, a data dictionary, a schema, or a source document (see **Data privacy**). If none is available, record the check as supported but not assessed and ask the user for the list.
 3. **Separate the three kinds of uniqueness.** A single-column ID (`unique`), a compound key such as invoice + line number (`unique_together`), and whole-row copies (`max_duplicate_rows`) catch different problems. Consider all three.
 4. **Separate always-required fields from state-dependent ones.** Many blanks are legitimate: no closing date on an open ticket, no refund reference on a payment that was never refunded. Use `required` only where every row needs a value; use `conditional_required` when a status or flag makes a field mandatory (for example a closed ticket needs a closing date, a refunded payment needs a refund reference). Never count optional blanks as defects.
-5. **Write regexes that fit every legitimate subpopulation.** Before anchoring an ID or code pattern, check whether the valid values span several years, prefixes, regions, or channels (for example invoice numbers issued under two different year prefixes). A pattern built from the newest or most common variant alone flags thousands of valid rows.
+5. **Write regexes that fit every legitimate subpopulation.** An ID or code format usually comes from the user or a source. Before anchoring it, ask whether valid values span several years, prefixes, regions, or channels (for example invoice numbers issued under two different year prefixes). A pattern built from the newest or most common variant alone flags thousands of valid rows. If a regex flags a large share of a column, treat that as a sign the pattern is wrong before calling it a data problem.
 6. **Pair `type` with plausible bounds on numeric columns.** Quantities, prices, percentages, fees and ratings usually have a natural floor and a sensible ceiling. When the ceiling is not stated by the user or a source, it is an inferred candidate and must be labelled as one.
 7. **Do not over-reach.** Comprehensive does not mean every field is required, every rare value is invalid, or `NA` is missing. Each rule still needs a provenance level, and declining a check with a stated reason is better than guessing.
 
@@ -189,7 +199,7 @@ The JSON is the evidence. `references/OUTPUT.md` documents every field, status, 
 - Build the output from that saved JSON, never from recomputed numbers.
 - Show the three dimension rule-conformance scores, each with `evaluated`, `violations` and coverage context. Show no global score, and display `null` as **not assessed**.
 - Keep confirmed findings and candidate findings separate.
-- Do not put `--examples` raw values into a shareable artifact without the user's consent.
+- Do not run `--examples` without the user's consent, and do not put example values into a shareable artifact without it.
 - Write the dashboard outside the source data location unless the user asks otherwise.
 
 This skill ships no dashboard generator, HTML renderer, or charting dependency: the host agent builds the dashboard from the saved JSON.

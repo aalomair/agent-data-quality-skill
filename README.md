@@ -2,13 +2,15 @@
 
 An [Agent Skill](https://agentskills.io/specification) that lets an AI agent check the quality of a local dataset without guessing at the numbers.
 
-**Version 0.4.0** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
+**Version 0.4.1** · [Releases](https://github.com/aalomair/agent-data-quality-skill/releases) · [Changelog](CHANGELOG.md) · MIT
 
 ## Why this exists
 
 Ask a language model how many rows in a file are missing an email address and it will often give you a confident number that it never actually counted. That is fine for a chat, and not fine for a data-quality report someone is going to act on.
 
 This skill splits the work. The agent (Hermes, Claude Code, Codex, or any host that reads Agent Skills) does what models are good at: understanding what you're trying to check, proposing rules, and writing up the findings. A small Python script, `skills/data-quality/scripts/dq.py`, does the part that has to be exact: reading the file, profiling every column, and evaluating each rule. The script makes no model calls, opens no network connections, and never writes to the data it inspects.
+
+That split is also what keeps your data private. The file is read on your machine, by the script. The agent's model, which usually runs in the cloud, only sees the script's summary. More on what that summary contains in [What the model sees](#what-the-model-sees).
 
 I've tested it end to end with Hermes. Claude Code and Codex use the same skill format, but I haven't run them through the same harness yet.
 
@@ -21,7 +23,7 @@ curl -fsSL -o data-quality-skill.zip \
   https://github.com/aalomair/agent-data-quality-skill/releases/latest/download/data-quality-skill.zip
 
 # or pin this exact version:
-# https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.4.0/data-quality-skill.zip
+# https://github.com/aalomair/agent-data-quality-skill/releases/download/v0.4.1/data-quality-skill.zip
 ```
 
 ```bash
@@ -272,7 +274,9 @@ Those coverage numbers are worked out from the checks in the report; they don't 
 
 Testing the skill across several agents on the same synthetic file showed that the engine wasn't the weak point. Rule choice was. Given the same request for a "comprehensive" check, one agent covered almost every planted issue category and another missed more than half by a rough count, mostly because it never wrote rules for some columns. Running more checks didn't help on its own either.
 
-Since 0.4.0, `SKILL.md` asks the agent, for comprehensive requests, to walk every rule family against every column before writing YAML, to look at the real values of low-cardinality columns before writing `allowed` lists, and to keep three kinds of uniqueness and two kinds of missingness apart. Anything it chose not to check goes into a **Supported but not assessed** section of the report, with a reason. A visible gap is better than a silent one.
+Since 0.4.0, `SKILL.md` asks the agent, for comprehensive requests, to walk every rule family against every column before writing YAML and to keep three kinds of uniqueness and two kinds of missingness apart. Anything it chose not to check goes into a **Supported but not assessed** section of the report, with a reason. A visible gap is better than a silent one.
+
+(0.4.0 also told the agent to look at the real values of low-cardinality columns. That sent raw data to the model, so 0.4.1 removed it. Category lists now come from you or a source document.)
 
 Keep the numbers apart when reading a report. **Rule violations** are counted per check, so one bad value can fail two rules and duplicated rows repeat the same violations. **Distinct affected rows**, **duplicate extras** and **dimension rule-conformance** are each something different again. None of them can be added together or divided by a count of real defects.
 
@@ -288,6 +292,21 @@ Release notes are in [CHANGELOG.md](CHANGELOG.md), and the newest release is alw
 - One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected; data is never truncated, shifted or quietly dropped.
 - Text defaults to strict UTF-8 (a BOM is fine). `--encoding NAME` lets you use another encoding, still strictly, with no lossy replacement and no auto-detection.
 - Some regular expressions can backtrack catastrophically in Python. If you're running untrusted rules or running unattended, set a timeout in the host. The script doesn't have its own regex timeout.
+
+## What the model sees
+
+The script runs locally and never sends anything anywhere. The model driving the agent is a different matter: whatever the agent reads goes to that model's provider. So the skill tells the agent never to open the source itself, and to work only from what `dq.py` prints.
+
+That output contains:
+
+- column names, row and column counts, missing and distinct counts, inferred types and string lengths;
+- **numeric min, max and mean**, which are real values from your data;
+- rule results and row positions (line numbers, not contents);
+- raw example values, **only** if you run with `--examples`, which the agent must ask you about first.
+
+It never contains whole rows or arbitrary cell values.
+
+Two honest limits. First, the skill can instruct the agent but can't technically stop an agent that has file access from opening the file anyway. If you need a guarantee, use your agent host's permission settings to block reads of the data folder, so only the script can see it. Second, rules that depend on knowing the data, like the allowed values of a status column or the exact format of an ID, need to come from you or from documentation. When they don't, the agent lists the check as not assessed rather than peeking.
 
 ## Read-only, always
 

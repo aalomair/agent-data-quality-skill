@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. Versions are git tags and GitHub releases; this is not a Python package.
 
+## [0.4.1] — 2026-11-09
+
+Privacy fix. The engine, rules, and JSON output are unchanged.
+
+- Removed the 0.4.0 instruction that had the agent read real values from low-cardinality columns. It sent raw data to the model.
+- `SKILL.md` adds a **Data privacy** section: the agent never opens, prints or samples the source; everything it knows about the data comes from `dq.py` output; `--examples` needs the user's explicit consent; rules that need unknown values (category lists, ID formats, business limits) come from the user or a source, or are reported as not assessed.
+- README adds **What the model sees**, listing exactly what reaches the model (including numeric min/max/mean) and the limits of an instruction-only guarantee.
+
 ## [0.4.0] — 2026-11-08
 
 Better rule coverage for comprehensive assessments, based on benchmark runs across several agents. The engine, rules, and JSON output are unchanged.
