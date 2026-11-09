@@ -12,6 +12,8 @@ The engine can now propose rules itself, so the model reviews a fixed list inste
 - `dq.run()` takes matching `discover`, `strict_privacy` and `mask_examples` keyword arguments.
 - `SKILL.md`: the default workflow is now discover → review → verify, with a **Candidates reviewed** table in the report.
 - The search over column pairs and state columns stops at a fixed cell budget in a fixed order, and reports how much it examined.
+- `allowed` candidates are only proposed for columns of plain text, numbers or booleans, so Excel date columns no longer get an unusable list.
+- Docs: README reorganised around discover → review → verify and what the model sees; testing notes now cover Hermes, Claude Code and Codex.
 
 ## [0.4.1] — 2026-11-09
 

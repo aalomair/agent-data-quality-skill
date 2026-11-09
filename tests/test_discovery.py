@@ -139,3 +139,22 @@ def test_output_md_documents_discovery_fields(tmp_path):
     assert set(index["discovery_search"]) == set(discovery["search"])
     assert all(set(index["discovery_column"]) == set(c) for c in discovery["columns"])
     assert all(set(index["candidate"]) == set(c) for c in discovery["candidates"])
+
+
+def test_discover_skips_allowed_for_non_scalar_cells(tmp_path):
+    import datetime as dt
+
+    from openpyxl import Workbook
+
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["when", "status"])
+    for n in range(40):
+        sheet.append([dt.datetime(2025, 1, 1 + n % 3), ["Open", "Closed"][n % 2]])
+    path = tmp_path / "dates.xlsx"
+    book.save(path)
+    payload, _ = run_json([path, "--discover"])
+    allowed = {c["column"]: c["value"] for c in payload["discovery"]["candidates"]
+               if c["rule"] == "allowed"}
+    assert "when" not in allowed
+    assert allowed["status"] == ["Closed", "Open"]

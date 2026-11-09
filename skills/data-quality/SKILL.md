@@ -1,6 +1,6 @@
 ---
 name: data-quality
-description: Profile local datasets (CSV, TSV, XLSX, JSON, JSONL, text, SQLite, Parquet) and check YAML data-quality rules read-only.
+description: Profile local datasets (CSV, TSV, XLSX, JSON, JSONL, text, SQLite, Parquet), propose candidate data-quality rules from patterns in the data, and check YAML rules deterministically and read-only, without the model reading raw rows.
 license: MIT
 compatibility: Requires Python 3.10–3.14 plus the dependencies in scripts/requirements.txt (XLSX needs openpyxl; Parquet needs optional pyarrow). Reads local files and one local SQLite table; no network access. CI-tested on Linux with Python 3.10–3.14.
 metadata:
@@ -23,12 +23,13 @@ Your job is to keep the data on the user's machine. The helper reads the source 
 - **When a rule needs knowledge you don't have** (the allowed values of a category, the exact format of an ID, a business limit), get it from the user, a source document, or a schema. If none is available, list the check under "Supported but not assessed" with that reason. Do not look at the data to fill the gap.
 - The skill cannot technically stop a host agent with file access from reading the source. If the user needs that guarantee, point them to the host's own permission settings, so that only `dq.py` can read the data folder.
 
-Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Hermes has been tested end-to-end with this skill. Codex and Claude Code are format-compatible, but this repository has not harness-tested them.
+Portability note: this bundle follows the portable Agent Skills layout (`SKILL.md` + `scripts/` + `references/`). Tested end to end with Hermes, Claude Code and Codex.
 
 ## When to Use
 
 - The user asks for a data-quality profile, validation, or "is this file clean?" check on a local dataset.
 - You need deterministic counts (missing values, duplicates, rule violations) to cite in a report.
+- The user wants a comprehensive check but has no rules yet: `--discover` proposes them.
 - The user supplies or requests explicit acceptance rules: required, max_null_pct, unique, type, min, max, allowed, regex, max_duplicate_rows, dataset-level `unique_together` groups, or a narrow dataset-level `conditional_required` rule.
 
 Don't use for: cleansing, repairing, or altering source data (permanently out of scope by design); comparing editions (no baselines/drift detection); semantic or factual validation of text; or non-SQLite databases (export to a supported file first).

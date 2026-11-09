@@ -1782,7 +1782,8 @@ def discover(loaded: Loaded, strict_privacy: bool) -> dict:
         # allowed (low-cardinality text)
         distinct = len(fact["counts"])
         values_evidence = None
-        if (enough and index not in numeric_cols
+        plain = all(key[0] in ("string", "boolean", "number") for key in fact["counts"])
+        if (enough and plain and index not in numeric_cols
                 and distinct <= cfg["category_max_distinct"]
                 and distinct * 5 <= present):
             ranked = _ranked(fact["counts"])

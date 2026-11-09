@@ -8,11 +8,11 @@ An [Agent Skill](https://agentskills.io/specification) that lets an AI agent che
 
 Ask a language model how many rows in a file are missing an email address and it will often give you a confident number that it never actually counted. That is fine for a chat, and not fine for a data-quality report someone is going to act on.
 
-This skill splits the work. The agent (Hermes, Claude Code, Codex, or any host that reads Agent Skills) does what models are good at: understanding what you're trying to check, proposing rules, and writing up the findings. A small Python script, `skills/data-quality/scripts/dq.py`, does the part that has to be exact: reading the file, profiling every column, and evaluating each rule. The script makes no model calls, opens no network connections, and never writes to the data it inspects.
+This skill splits the work. The agent (Hermes, Claude Code, Codex, or any host that reads Agent Skills) does what models are good at: understanding what you're trying to check, judging which rules make sense, and writing up the findings. A small Python script, `skills/data-quality/scripts/dq.py`, does the part that has to be exact: reading the file, profiling every column, proposing candidate rules from the patterns it finds, and evaluating each rule. The script makes no model calls, opens no network connections, and never writes to the data it inspects.
 
 That split is also what keeps your data private. The file is read on your machine, by the script. The agent's model, which usually runs in the cloud, only sees the script's summary. More on what that summary contains in [What the model sees](#what-the-model-sees).
 
-I've tested it end to end with Hermes. Claude Code and Codex use the same skill format, but I haven't run them through the same harness yet.
+I've tested it end to end with Hermes, Claude Code and Codex.
 
 ## Install for agents
 
@@ -41,7 +41,7 @@ sha256sum -c SHA256SUMS
 
 | Host | Location |
 |---|---|
-| Hermes | `<hermes-home>/skills/data-quality/` (the host I've tested) |
+| Hermes | `<hermes-home>/skills/data-quality/` |
 | Claude Code | `~/.claude/skills/data-quality/` (personal) or `.claude/skills/data-quality/` (project), per the [Claude Code skills docs](https://code.claude.com/docs/en/skills#where-skills-live) |
 | Codex | `$HOME/.agents/skills/data-quality/` (user) or `.agents/skills/data-quality/` (repository), per the [Codex skills docs](https://developers.openai.com/codex/skills) |
 | Anything else | wherever that host keeps skills |
@@ -187,28 +187,6 @@ payload["overall"]["exit_code"]  # 0, 1, or 2
 
 The arguments match the CLI: `dq.run(source, rules=None, *, sheet=None, table=None, encoding=None, examples=0, discover=False, strict_privacy=False, mask_examples=False)`. The CLI's JSON is still the main contract.
 
-## What's in the repo
-
-```text
-README.md                      this file
-CHANGELOG.md                   release notes
-LICENSE                        MIT
-.github/workflows/ci.yml       tests on Python 3.10–3.14 + full-history secret scan
-skills/data-quality/           the skill itself (this is what the release zip contains)
-  SKILL.md                     instructions the agent reads
-  LICENSE                      MIT notice, so copied installs keep it
-  scripts/dq.py                the CLI and dq.run()
-  scripts/requirements.txt     runtime dependency ranges
-  references/RULES.md          exactly how each rule is evaluated
-  references/OUTPUT.md         field-by-field guide to the JSON output
-tests/test_dq.py               main pytest suite (CLI and unit tests)
-tests/test_publication.py      packaging, licensing and release checks
-tests/test_skill_bundle.py     doc/dependency sync, OUTPUT.md contract, copy parity, versions
-benchmark/run.py               defect-injection benchmark (UCI Adult, plus ERPNext if you have an export)
-benchmark/public/              UCI Adult data (CC BY 4.0), its notice, and rules
-benchmark/private/             local-only datasets (gitignored)
-```
-
 ## Discover, review, verify
 
 Since 0.5.0 the engine can propose the rules itself:
@@ -233,6 +211,24 @@ It looks for patterns and turns each into a candidate rule with the evidence beh
 Every candidate is labelled *inferred* and carries `expected`: what it would report if you ran it now. The agent's job changes from inventing rules to reviewing a list: accept, reject or edit each one, add the business limits only a person knows (the engine never guesses `min` or `max`), then run the accepted rules with `--rules`. Scores only ever come from that last run.
 
 Because the same file always gives the same candidates, two different models start from the same place. On the synthetic retail file from my benchmark, discovery alone proposes 47 candidates in about two seconds, including the duplicate rows, the order-plus-line key, and the cancelled and returned orders with no reason.
+
+## What the model sees
+
+The script runs locally and never sends anything anywhere. The model driving the agent is a different matter: whatever the agent reads goes to that model's provider. So the skill tells the agent never to open the source itself, and to work only from what `dq.py` prints.
+
+That output contains:
+
+- column names, row and column counts, missing and distinct counts, inferred types and string lengths;
+- **numeric min, max and mean**, which are real values from your data;
+- rule results and row positions (line numbers, not contents);
+- raw example values, **only** if you run with `--examples`, which the agent must ask you about first;
+- with `--discover`, masked shapes (`ORD-9999-999999`, never the values) and the labels of columns with a few distinct text values, such as a status column.
+
+For sensitive data, `--strict-privacy` drops numeric min/max/mean and the category labels, and refuses raw examples. `--mask-examples` shows examples as shapes instead of values.
+
+It never contains whole rows, and high-cardinality columns such as names or emails only ever appear as shapes.
+
+Two honest limits. First, the skill can instruct the agent but can't technically stop an agent that has file access from opening the file anyway. If you need a guarantee, use your agent host's permission settings to block reads of the data folder, so only the script can see it. Second, under `--strict-privacy` the agent doesn't get category labels, so rules that need them, like the allowed values of a status column, have to come from you or from documentation. When they don't, the agent lists the check as not assessed rather than peeking.
 
 ## Supported inputs
 
@@ -269,7 +265,7 @@ A rule failing only means something if the rule was right in the first place. So
 
 - **Explicit constraint (confirmed):** the user, a contract, a standard, a schema, a policy, an SLA, or another authoritative source actually requires it.
 - **Source-informed candidate:** official metadata strongly suggests it, but nobody has said it's a requirement. A field being documented doesn't make it mandatory.
-- **Inferred candidate:** the agent guessed it from the profile, patterns in the data, or what the columns probably mean.
+- **Inferred candidate:** proposed by `--discover`, or guessed by the agent from the profile or from what the columns probably mean.
 
 Only failed confirmed constraints go under **Confirmed findings**. Failures from the other two go under **Candidate findings**, along with where the rule came from, why it was proposed, the evidence, how uncertain it is, and the result. Official metadata on its own doesn't promote a candidate to a confirmed requirement. When the difference matters, run the confirmed rules and the candidate rules separately.
 
@@ -299,17 +295,9 @@ Those coverage numbers are worked out from the checks in the report; they don't 
 
 Testing the skill across several agents on the same synthetic file showed that the engine wasn't the weak point. Rule choice was. Given the same request for a "comprehensive" check, one agent covered almost every planted issue category and another missed more than half by a rough count, mostly because it never wrote rules for some columns. Running more checks didn't help on its own either.
 
-Since 0.4.0, `SKILL.md` asks the agent, for comprehensive requests, to walk every rule family against every column before writing YAML and to keep three kinds of uniqueness and two kinds of missingness apart. Anything it chose not to check goes into a **Supported but not assessed** section of the report, with a reason. A visible gap is better than a silent one.
-
-(0.4.0 also told the agent to look at the real values of low-cardinality columns. That sent raw data to the model, so 0.4.1 removed it. Category lists now come from you or a source document.)
+That is why 0.5.0 moved rule discovery into the engine (see [Discover, review, verify](#discover-review-verify)). On top of that, `SKILL.md` asks the agent, for comprehensive requests, to walk every rule family against every column, and to keep three kinds of uniqueness and two kinds of missingness apart. Anything it chose not to check goes into a **Supported but not assessed** section of the report, with a reason. A visible gap is better than a silent one.
 
 Keep the numbers apart when reading a report. **Rule violations** are counted per check, so one bad value can fail two rules and duplicated rows repeat the same violations. **Distinct affected rows**, **duplicate extras** and **dimension rule-conformance** are each something different again. None of them can be added together or divided by a count of real defects.
-
-## Versions and releases
-
-Versions are git tags and GitHub releases. This isn't a Python package and it isn't on PyPI. Release zips are built with `git archive` from the tag, so they contain exactly what's tracked under `skills/data-quality/`.
-
-Release notes are in [CHANGELOG.md](CHANGELOG.md), and the newest release is always at [github.com/aalomair/agent-data-quality-skill/releases/latest](https://github.com/aalomair/agent-data-quality-skill/releases/latest).
 
 ## Limits
 
@@ -318,24 +306,6 @@ Release notes are in [CHANGELOG.md](CHANGELOG.md), and the newest release is alw
 - One sheet or one table per run. Duplicate or empty headers are rejected, not renamed. A record with more fields than the header is rejected; data is never truncated, shifted or quietly dropped.
 - Text defaults to strict UTF-8 (a BOM is fine). `--encoding NAME` lets you use another encoding, still strictly, with no lossy replacement and no auto-detection.
 - Some regular expressions can backtrack catastrophically in Python. If you're running untrusted rules or running unattended, set a timeout in the host. The script doesn't have its own regex timeout.
-
-## What the model sees
-
-The script runs locally and never sends anything anywhere. The model driving the agent is a different matter: whatever the agent reads goes to that model's provider. So the skill tells the agent never to open the source itself, and to work only from what `dq.py` prints.
-
-That output contains:
-
-- column names, row and column counts, missing and distinct counts, inferred types and string lengths;
-- **numeric min, max and mean**, which are real values from your data;
-- rule results and row positions (line numbers, not contents);
-- raw example values, **only** if you run with `--examples`, which the agent must ask you about first;
-- with `--discover`, masked shapes (`ORD-9999-999999`, never the values) and the labels of columns with a few distinct text values, such as a status column.
-
-For sensitive data, `--strict-privacy` drops numeric min/max/mean and the category labels, and refuses raw examples. `--mask-examples` shows examples as shapes instead of values.
-
-It never contains whole rows, and high-cardinality columns such as names or emails only ever appear as shapes.
-
-Two honest limits. First, the skill can instruct the agent but can't technically stop an agent that has file access from opening the file anyway. If you need a guarantee, use your agent host's permission settings to block reads of the data folder, so only the script can see it. Second, rules that depend on knowing the data, like the allowed values of a status column or the exact format of an ID, need to come from you or from documentation. When they don't, the agent lists the check as not assessed rather than peeking.
 
 ## Read-only, always
 
@@ -347,18 +317,44 @@ Two honest limits. First, the skill can instruct the agent but can't technically
 ## What it doesn't tell you
 
 - Whether text is semantically or factually correct, whether data is fresh (without an SLA to check against), or whether it's accurate (without reference data).
-- Anything about baselines, drift, distribution changes or outliers.
+- Anything about baselines, drift or distribution changes. There's no statistical outlier scoring; discovery only proposes candidate rules, such as leaving a rare category value out of an `allowed` list.
 - XLSX formula results; formulas aren't evaluated and cached values may be missing or stale (you'll get a warning).
 - An overall quality score. Exit 0 on its own doesn't prove the data is good.
 - Treating hostile cell contents as plain data helps, but it can't make every host model immune to prompt injection.
 
 ## Verification
 
-The dated runs below used Linux, Python 3.14.4, pandas 3.0.6, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1 and pyarrow 25.0.1.
+The dated runs below used Linux, Python 3.13.18, pandas 3.0.5, openpyxl 3.1.5, PyYAML 6.0.3, pytest 9.1.1 and pyarrow 26.0.1.
 
-- **Test suite (2026-11-07):** `210 passed` on Python 3.14, and again in clean Python 3.11 and 3.10 virtual environments.
-- **UCI Adult benchmark (2026-11-07):** **60/60** expected rule violations detected, 0 unexpected, source file unchanged. These are injected defects counted per rule check, and some checks overlap, so this isn't 60 independent real-world defects. See the [benchmark notice](benchmark/public/README.md).
+- **Test suite (2026-11-09):** `221 passed`, with pyarrow installed so the Parquet tests ran too. CI runs the same suite on Python 3.10–3.14.
+- **Clean install (2026-11-09):** the v0.5.0 release zip in a fresh virtual environment, then discover → verify on the 6,124-row synthetic retail file. Running the proposed rules reported exactly the violations discovery predicted (1,056), and every supported format round-tripped without errors.
+- **Without the new flags (2026-11-09):** output is byte-identical to v0.4.1.
+- **UCI Adult benchmark (2026-11-09):** **60/60** expected rule violations detected, 0 unexpected, source file unchanged. These are injected defects counted per rule check, and some checks overlap, so this isn't 60 independent real-world defects. See the [benchmark notice](benchmark/public/README.md).
 - **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the whole suite on Python 3.10, 3.11, 3.12, 3.13 and 3.14, plus a Gitleaks scan of the full git history, on every push. A CI run only vouches for the commit it ran on.
+
+## What's in the repo
+
+```text
+README.md                      this file
+CHANGELOG.md                   release notes
+LICENSE                        MIT
+.github/workflows/ci.yml       tests on Python 3.10–3.14 + full-history secret scan
+skills/data-quality/           the skill itself (this is what the release zip contains)
+  SKILL.md                     instructions the agent reads
+  LICENSE                      MIT notice, so copied installs keep it
+  scripts/dq.py                the CLI and dq.run()
+  scripts/requirements.txt     runtime dependency ranges
+  references/RULES.md          exactly how each rule is evaluated
+  references/OUTPUT.md         field-by-field guide to the JSON output
+tests/test_dq.py               main pytest suite (CLI and unit tests)
+tests/test_publication.py      packaging, licensing and release checks
+tests/test_skill_bundle.py     doc/dependency sync, OUTPUT.md contract, copy parity, versions
+tests/test_discovery.py        --discover, --strict-privacy and --mask-examples
+tests/test_benchmark.py        benchmark harness checks
+benchmark/run.py               defect-injection benchmark (UCI Adult, plus ERPNext if you have an export)
+benchmark/public/              UCI Adult data (CC BY 4.0), its notice, and rules
+benchmark/private/             local-only datasets (gitignored)
+```
 
 ## Development
 
@@ -374,13 +370,19 @@ CI uses read-only repository permissions, doesn't persist checkout credentials, 
 
 Keep any credentials in `.env` or `.env.*` files and generated reports in `reports/`; both are gitignored. A tracked `.env.example` should only ever hold placeholders. Note that `.gitignore` won't remove a secret that's already been committed, so look at what you're staging and run the secret scan before you push.
 
+## Versions and releases
+
+Versions are git tags and GitHub releases. This isn't a Python package and it isn't on PyPI. Release zips are built with `git archive` from the tag, so they contain exactly what's tracked under `skills/data-quality/`.
+
+Release notes are in [CHANGELOG.md](CHANGELOG.md), and the newest release is always at [github.com/aalomair/agent-data-quality-skill/releases/latest](https://github.com/aalomair/agent-data-quality-skill/releases/latest).
+
 ## Not planned
 
 These are left out on purpose, and I'm not building hooks for them:
 
 - **Baseline comparison:** no saved profiles to compare a new version of a dataset against.
 - **Drift detection:** nothing that tracks changes between runs.
-- **Statistical outlier detection (IQR and similar):** only the rules you supply are checked.
+- **Statistical outlier detection (IQR and similar):** discovery proposes candidate rules from simple fixed thresholds, and nothing fails until a rule is accepted and run.
 - **Live database connections beyond SQLite** (SQLAlchemy, PostgreSQL, MySQL, SQL Server): export to a file first.
 - **Fixing data:** the skill reads; it never modifies.
 
